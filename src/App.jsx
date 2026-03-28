@@ -3,11 +3,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { fetchCyberportEnvironment } from "./environmentWeather.js";
 import { fetchDroneRoutesWithFallback } from "./dronePathsApi.js";
-import {
-  buildDroneGeoJSON,
-  DRONE_ROUTES,
-  routesToPathLineCollection,
-} from "./droneSim.js";
+import { buildDroneGeoJSON, DRONE_ROUTES, routesToPathLineCollection } from "./droneSim.js";
 import "./App.css";
 
 function App() {
@@ -50,10 +46,7 @@ function App() {
         const data = await fetchCyberportEnvironment();
         if (cancelled) return;
         setEnv(data);
-        const allMissing =
-          data.tempC == null &&
-          !data.windText &&
-          !data.visibilityText;
+        const allMissing = data.tempC == null && !data.windText && !data.visibilityText;
         if (allMissing && data.errors.length > 0) {
           setEnvError(data.errors.join(" "));
         }
@@ -118,6 +111,41 @@ function App() {
     const onLoad = () => {
       if (cancelled) return;
 
+      // Load no-fly zones
+      fetch("/Keep-Data-Moving-GS1-IoT-DataHackathon2026/no-fly-zones.geojson")
+        .then((res) => res.json())
+        .then((geojson) => {
+          if (!cancelled && map.getSource("no-fly-zones")) return;
+          if (!cancelled) {
+            map.addSource("no-fly-zones", {
+              type: "geojson",
+              data: geojson,
+            });
+
+            map.addLayer({
+              id: "no-fly-zones-fill",
+              type: "fill",
+              source: "no-fly-zones",
+              paint: {
+                "fill-color": "#ef4444",
+                "fill-opacity": 0.3,
+              },
+            });
+
+            map.addLayer({
+              id: "no-fly-zones-outline",
+              type: "line",
+              source: "no-fly-zones",
+              paint: {
+                "line-color": "#ef4444",
+                "line-width": 2,
+                "line-opacity": 0.8,
+              },
+            });
+          }
+        })
+        .catch((err) => console.error("Error loading no-fly zones:", err));
+
       map.addSource("drone-paths", {
         type: "geojson",
         data: routesToPathLineCollection(droneRoutesRef.current),
@@ -125,10 +153,7 @@ function App() {
 
       map.addSource("drones", {
         type: "geojson",
-        data: buildDroneGeoJSON(
-          performance.now(),
-          droneRoutesRef.current
-        ),
+        data: buildDroneGeoJSON(performance.now(), droneRoutesRef.current),
       });
 
       map.addLayer({
@@ -137,17 +162,7 @@ function App() {
         source: "drones",
         paint: {
           "circle-radius": 8,
-          "circle-color": [
-            "match",
-            ["get", "status"],
-            "normal",
-            "#10b981",
-            "warning",
-            "#f59e0b",
-            "alert",
-            "#ef4444",
-            "#ffffff",
-          ],
+          "circle-color": ["match", ["get", "status"], "normal", "#10b981", "warning", "#f59e0b", "alert", "#ef4444", "#ffffff"],
           "circle-stroke-width": 2,
           "circle-stroke-color": "#fff",
           "circle-opacity": 0.9,
@@ -164,17 +179,7 @@ function App() {
             "line-cap": "round",
           },
           paint: {
-            "line-color": [
-              "match",
-              ["get", "status"],
-              "normal",
-              "#10b981",
-              "warning",
-              "#f59e0b",
-              "alert",
-              "#ef4444",
-              "#64748b",
-            ],
+            "line-color": ["match", ["get", "status"], "normal", "#10b981", "warning", "#f59e0b", "alert", "#ef4444", "#64748b"],
             "line-width": 2.5,
             "line-opacity": 0.7,
           },
@@ -186,9 +191,7 @@ function App() {
         if (cancelled) return;
         const src = map.getSource("drones");
         if (src) {
-          src.setData(
-            buildDroneGeoJSON(time, droneRoutesRef.current)
-          );
+          src.setData(buildDroneGeoJSON(time, droneRoutesRef.current));
         }
         rafId = requestAnimationFrame(animateDrones);
       };
@@ -202,12 +205,7 @@ function App() {
         const alt = feat.properties.alt_m ?? "—";
         const spd = feat.properties.speed_mps ?? "—";
 
-        new maplibregl.Popup()
-          .setLngLat(coordinates)
-          .setHTML(
-            `<strong>Drone ID: ${id}</strong><br>Alt: ${alt}m AGL<br>Speed: ${spd}m/s`
-          )
-          .addTo(map);
+        new maplibregl.Popup().setLngLat(coordinates).setHTML(`<strong>Drone ID: ${id}</strong><br>Alt: ${alt}m AGL<br>Speed: ${spd}m/s`).addTo(map);
       };
 
       const onEnter = () => {
@@ -259,22 +257,10 @@ function App() {
 
       <aside className="panel hkt-left-panel">
         <div className="tabs" role="tablist" aria-label="Fleet sections">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={leftTab === "overview"}
-            className={`tab-btn${leftTab === "overview" ? " active" : ""}`}
-            onClick={() => setLeftTab("overview")}
-          >
+          <button type="button" role="tab" aria-selected={leftTab === "overview"} className={`tab-btn${leftTab === "overview" ? " active" : ""}`} onClick={() => setLeftTab("overview")}>
             Overview
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={leftTab === "logistics"}
-            className={`tab-btn${leftTab === "logistics" ? " active" : ""}`}
-            onClick={() => setLeftTab("logistics")}
-          >
+          <button type="button" role="tab" aria-selected={leftTab === "logistics"} className={`tab-btn${leftTab === "logistics" ? " active" : ""}`} onClick={() => setLeftTab("logistics")}>
             Parking &amp; Battery
           </button>
         </div>
@@ -284,8 +270,7 @@ function App() {
             <h3>Fleet Overview</h3>
             <div className="card">
               <p>
-                Total Active Drones:{" "}
-                <span className="hkt-stat-green">42</span>
+                Total Active Drones: <span className="hkt-stat-green">42</span>
               </p>
               <p>
                 Grounded / Standby: <span>8</span>
@@ -311,28 +296,16 @@ function App() {
             <h3>Environment (HK Observatory)</h3>
             <div className="card alert-green">
               <p className="hkt-card-block">
-                <strong>Location:</strong>{" "}
-                {env?.locationLabel ?? "Cyberport, HK"}
+                <strong>Location:</strong> {env?.locationLabel ?? "Cyberport, HK"}
               </p>
               <p className="hkt-card-block">
-                <strong>Wind:</strong>{" "}
-                {envLoading
-                  ? "…"
-                  : env?.windText ?? "—"}
+                <strong>Wind:</strong> {envLoading ? "…" : env?.windText ?? "—"}
               </p>
               <p className="hkt-card-block">
-                <strong>Visibility:</strong>{" "}
-                {envLoading
-                  ? "…"
-                  : env?.visibilityText ?? "—"}
+                <strong>Visibility:</strong> {envLoading ? "…" : env?.visibilityText ?? "—"}
               </p>
               <p className="hkt-card-block">
-                <strong>Temp:</strong>{" "}
-                {envLoading
-                  ? "…"
-                  : env?.tempC != null
-                    ? `${env.tempC}°C`
-                    : "—"}
+                <strong>Temp:</strong> {envLoading ? "…" : env?.tempC != null ? `${env.tempC}°C` : "—"}
               </p>
               {env?.tempStation && !envLoading && env?.tempC != null && (
                 <p className="hkt-env-meta">
@@ -340,53 +313,32 @@ function App() {
                   {env.humidityPct != null && (
                     <>
                       {" "}
-                      · Humidity {env.humidityPct}%
-                      {env.humidityPlace ? ` (${env.humidityPlace})` : ""}
+                      · Humidity {env.humidityPct}%{env.humidityPlace ? ` (${env.humidityPlace})` : ""}
                     </>
                   )}
                 </p>
               )}
-              {(env?.hkoForecastDesc || env?.hkoForecastPeriod) &&
-                !envLoading && (
-                  <div className="hkt-hko-forecast">
-                    {env.hkoForecastPeriod && (
-                      <p className="hkt-hko-forecast-title">
-                        <strong>{env.hkoForecastPeriod}</strong>
-                        {env.hkoForecastUpdateTime && (
-                          <span className="hkt-hko-forecast-time">
-                            {" "}
-                            · {env.hkoForecastUpdateTime}
-                          </span>
-                        )}
-                      </p>
-                    )}
-                    {env.hkoForecastDesc && (
-                      <p className="hkt-hko-forecast-desc">
-                        {env.hkoForecastDesc}
-                      </p>
-                    )}
-                    <p className="hkt-env-inline-src">
-                      Source: Hong Kong Observatory Open Data API (
-                      <code>flw</code>) via{" "}
-                      <a
-                        href="https://data.gov.hk/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        DATA.GOV.HK
-                      </a>
-                      .
+              {(env?.hkoForecastDesc || env?.hkoForecastPeriod) && !envLoading && (
+                <div className="hkt-hko-forecast">
+                  {env.hkoForecastPeriod && (
+                    <p className="hkt-hko-forecast-title">
+                      <strong>{env.hkoForecastPeriod}</strong>
+                      {env.hkoForecastUpdateTime && <span className="hkt-hko-forecast-time"> · {env.hkoForecastUpdateTime}</span>}
                     </p>
-                  </div>
-                )}
+                  )}
+                  {env.hkoForecastDesc && <p className="hkt-hko-forecast-desc">{env.hkoForecastDesc}</p>}
+                  <p className="hkt-env-inline-src">
+                    Source: Hong Kong Observatory Open Data API (<code>flw</code>) via{" "}
+                    <a href="https://data.gov.hk/" target="_blank" rel="noopener noreferrer">
+                      DATA.GOV.HK
+                    </a>
+                    .
+                  </p>
+                </div>
+              )}
               <p className="hkt-env-sources">
-                Regional temperature/humidity: HKO <code>rhrread</code>. Wind
-                &amp; visibility:{" "}
-                <a
-                  href="https://open-meteo.com/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
+                Regional temperature/humidity: HKO <code>rhrread</code>. Wind &amp; visibility:{" "}
+                <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">
                   Open-Meteo
                 </a>{" "}
                 (grid over Cyberport). Refreshed every 10 min.
@@ -405,76 +357,53 @@ function App() {
             <h3>Vertiport &amp; Parking Status</h3>
             <div className="card">
               <p>
-                Available Spots:{" "}
-                <span className="hkt-stat-bold">14 / 20</span>
+                Available Spots: <span className="hkt-stat-bold">14 / 20</span>
               </p>
               <hr className="hkt-divider" />
               <p>
-                Central Hub (Pad A):{" "}
-                <span className="hkt-text-green">Available</span>
+                Central Hub (Pad A): <span className="hkt-text-green">Available</span>
               </p>
               <p>
-                Cyberport Hub (Pad B):{" "}
-                <span className="hkt-text-amber">Occupied (Charging)</span>
+                Cyberport Hub (Pad B): <span className="hkt-text-amber">Occupied (Charging)</span>
               </p>
               <p>
-                Kwun Tong (Pad C):{" "}
-                <span className="hkt-text-red">Maintenance</span>
+                Kwun Tong (Pad C): <span className="hkt-text-red">Maintenance</span>
               </p>
               <p>
-                TKO Hub (Pad D):{" "}
-                <span className="hkt-text-green">Available</span>
+                TKO Hub (Pad D): <span className="hkt-text-green">Available</span>
               </p>
             </div>
 
             <h3>Fleet Battery Health</h3>
             <div className="card">
               <p>
-                Avg Fleet Battery:{" "}
-                <span className="hkt-stat-green">78%</span>
+                Avg Fleet Battery: <span className="hkt-stat-green">78%</span>
               </p>
               <p>
-                Critical (&lt; 20%):{" "}
-                <span className="hkt-text-red">2 Drones</span>
+                Critical (&lt; 20%): <span className="hkt-text-red">2 Drones</span>
               </p>
               <p>
-                Currently Charging:{" "}
-                <span className="hkt-text-blue">5 Drones</span>
+                Currently Charging: <span className="hkt-text-blue">5 Drones</span>
               </p>
 
               <hr className="hkt-divider hkt-divider-lg" />
 
               <div className="hkt-battery-row">
-                <span className="hkt-battery-label">
-                  Drone D-01 (Normal) - 85%
-                </span>
+                <span className="hkt-battery-label">Drone D-01 (Normal) - 85%</span>
                 <div className="progress-bg">
-                  <div
-                    className="progress-fill fill-green"
-                    style={{ width: "85%" }}
-                  />
+                  <div className="progress-fill fill-green" style={{ width: "85%" }} />
                 </div>
               </div>
               <div className="hkt-battery-row">
-                <span className="hkt-battery-label">
-                  Drone D-02 (Warning) - 30%
-                </span>
+                <span className="hkt-battery-label">Drone D-02 (Warning) - 30%</span>
                 <div className="progress-bg">
-                  <div
-                    className="progress-fill fill-yellow"
-                    style={{ width: "30%" }}
-                  />
+                  <div className="progress-fill fill-yellow" style={{ width: "30%" }} />
                 </div>
               </div>
               <div className="hkt-battery-row hkt-battery-row-last">
-                <span className="hkt-battery-label">
-                  Drone D-03 (Critical) - 12%
-                </span>
+                <span className="hkt-battery-label">Drone D-03 (Critical) - 12%</span>
                 <div className="progress-bg">
-                  <div
-                    className="progress-fill fill-red"
-                    style={{ width: "12%" }}
-                  />
+                  <div className="progress-fill fill-red" style={{ width: "12%" }} />
                 </div>
               </div>
             </div>
@@ -491,10 +420,7 @@ function App() {
               {env.hkoForecastDesc}
             </p>
           )}
-          <p className="hkt-advisory">
-            &quot;Airspace congestion predicted over Central district in 15
-            minutes. Suggest rerouting non-critical flights.&quot;
-          </p>
+          <p className="hkt-advisory">&quot;Airspace congestion predicted over Central district in 15 minutes. Suggest rerouting non-critical flights.&quot;</p>
         </div>
 
         <h3>Active Alarms</h3>
@@ -502,10 +428,7 @@ function App() {
           <p className="hkt-alarm-title">
             <strong>[10:14 AM] ⚠️ Collision Risk</strong>
           </p>
-          <p className="hkt-alarm-body">
-            Drone-A &amp; Drone-B proximity breach in Sector 4 (Altitude:
-            120m).
-          </p>
+          <p className="hkt-alarm-body">Drone-A &amp; Drone-B proximity breach in Sector 4 (Altitude: 120m).</p>
           <button type="button" className="btn btn-action">
             Force RTH (Return to Home)
           </button>
@@ -515,32 +438,19 @@ function App() {
           <p className="hkt-alarm-title">
             <strong>[10:12 AM] ⚠️ Strong Wind Warning</strong>
           </p>
-          <p className="hkt-alarm-body">
-            Gusts up to 35 km/h detected near Victoria Peak. Check drone
-            stability.
-          </p>
+          <p className="hkt-alarm-body">Gusts up to 35 km/h detected near Victoria Peak. Check drone stability.</p>
         </div>
 
         <div className="card alert-yellow">
           <p className="hkt-alarm-title">
             <strong>[10:05 AM] 🔋 Low Battery</strong>
           </p>
-          <p className="hkt-alarm-body">
-            Drone ID-892 battery at 15%. Initiating auto-landing protocol to
-            Cyberport Hub.
-          </p>
+          <p className="hkt-alarm-body">Drone ID-892 battery at 15%. Initiating auto-landing protocol to Cyberport Hub.</p>
         </div>
       </aside>
 
-      <button
-        type="button"
-        id="toggle3dBtn"
-        className={`btn hkt-toggle-3d${is3D ? " hkt-toggle-3d--active" : ""}`}
-        onClick={toggle3D}
-      >
-        {is3D
-          ? "Switch to 2D View (Top-Down)"
-          : "Switch to 3D View (Buildings)"}
+      <button type="button" id="toggle3dBtn" className={`btn hkt-toggle-3d${is3D ? " hkt-toggle-3d--active" : ""}`} onClick={toggle3D}>
+        {is3D ? "Switch to 2D View (Top-Down)" : "Switch to 3D View (Buildings)"}
       </button>
     </div>
   );
