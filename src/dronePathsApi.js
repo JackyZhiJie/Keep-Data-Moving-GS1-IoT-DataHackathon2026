@@ -1,4 +1,4 @@
-import { DRONE_ROUTES } from "./droneSim.js";
+import { generatePlannedDroneRoutes } from "./routePlanner.js";
 
 function featureToRoute(feature) {
   if (!feature || feature.type !== "Feature") return null;
@@ -11,13 +11,30 @@ function featureToRoute(feature) {
     .map((c) => [Number(c[0]), Number(c[1])])
     .filter((c) => Number.isFinite(c[0]) && Number.isFinite(c[1]));
 
-  if (coords.length < 3) return null;
+  if (coords.length < 2) return null;
 
   const p = feature.properties || {};
   const id = String(p.id || "").trim() || "D-00";
   const status = ["normal", "warning", "alert"].includes(p.status)
     ? p.status
     : "normal";
+
+  const first = coords[0];
+  const last = coords[coords.length - 1];
+  const ringLike =
+    coords.length >= 4 &&
+    first[0] === last[0] &&
+    first[1] === last[1];
+
+  let path = coords;
+  let closed = false;
+  if (ringLike) {
+    path = stripClosingDuplicate(coords);
+    closed = p.closed !== false;
+  } else {
+    path = coords;
+    closed = p.closed === true;
+  }
 
   return {
     id,
@@ -26,11 +43,17 @@ function featureToRoute(feature) {
     phase: Number.isFinite(Number(p.phase)) ? Number(p.phase) : 0,
     altM: Number.isFinite(Number(p.altM)) ? Number(p.altM) : 120,
     speedMps: Number.isFinite(Number(p.speedMps)) ? Number(p.speedMps) : 14,
-    path: stripClosingDuplicate(coords),
+    path,
+    closed,
+    ...(p.from && p.to
+      ? {
+          from: [Number(p.from[0]), Number(p.from[1])],
+          to: [Number(p.to[0]), Number(p.to[1])],
+        }
+      : {}),
   };
 }
 
-/** Remove repeated closing vertex; sim closes the loop mathematically. */
 function stripClosingDuplicate(coords) {
   if (coords.length < 2) return coords;
   const first = coords[0];
@@ -41,9 +64,6 @@ function stripClosingDuplicate(coords) {
   return coords;
 }
 
-/**
- * Parse GeoJSON FeatureCollection or a bare array of route features.
- */
 export function parseRoutesFromPayload(data) {
   let features = [];
   if (data?.type === "FeatureCollection" && Array.isArray(data.features)) {
@@ -62,6 +82,13 @@ export function parseRoutesFromPayload(data) {
           altM: Number(r.altM) || 120,
           speedMps: Number(r.speedMps) || 14,
           path: r.path.map((c) => [Number(c[0]), Number(c[1])]),
+          closed: r.closed !== false,
+          ...(r.from && r.to
+            ? {
+                from: [Number(r.from[0]), Number(r.from[1])],
+                to: [Number(r.to[0]), Number(r.to[1])],
+              }
+            : {}),
         };
       })
       .filter(Boolean);
@@ -77,14 +104,9 @@ function pathsUrl() {
     return String(envUrl).trim();
   }
   const base = import.meta.env.BASE_URL || "/";
-  const path = `${base.replace(/\/?$/, "/")}drone-corridors.json`;
-  return path;
+  return `${base.replace(/\/?$/, "/")}drone-corridors.json`;
 }
 
-/**
- * Fetch corridor definitions (GeoJSON FeatureCollection of LineStrings).
- * Refetch on an interval for “live” updates when you host a dynamic JSON/API.
- */
 export async function fetchDroneRoutes() {
   const url = pathsUrl();
   const res = await fetch(`${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`, {
@@ -105,8 +127,8 @@ export async function fetchDroneRoutesWithFallback() {
   try {
     return await fetchDroneRoutes();
   } catch (e) {
-    console.warn("[drone paths] using embedded routes:", e?.message || e);
-    return DRONE_ROUTES.map((r) => ({
+    console.warn("[drone paths] using auto-planned routes:", e?.message || e);
+    return generatePlannedDroneRoutes(null).map((r) => ({
       ...r,
       path: r.path.map((c) => [...c]),
     }));

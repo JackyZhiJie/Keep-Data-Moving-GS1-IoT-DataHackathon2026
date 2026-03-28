@@ -2,14 +2,110 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { fetchCyberportEnvironment } from "./environmentWeather.js";
-import { fetchDroneRoutesWithFallback } from "./dronePathsApi.js";
-import { buildDroneGeoJSON, DRONE_ROUTES, routesToPathLineCollection } from "./droneSim.js";
+import {
+  buildDroneGeoJSON,
+  DRONE_ROUTES,
+  getDroneLiveState,
+  routesToPathLineCollection,
+} from "./droneSim.js";
+import { buildNfzContext } from "./nfzGeometry.js";
+import {
+  buildDeliveryDropsGeoJSON,
+  deliveryDropRoutesToLineCollection,
+  generateDeliveryDropRoutes,
+  getDeliveryDropLiveState,
+} from "./deliveryDrops.js";
+import { disableMap3D, enableMap3D } from "./map3d.js";
+import { generatePlannedDroneRoutes } from "./routePlanner.js";
 import "./App.css";
+
+function mapPopupLegsHtml(from, to) {
+  if (
+    from &&
+    to &&
+    from.length >= 2 &&
+    to.length >= 2
+  ) {
+    return `<div class="hkt-map-popup-legs"><small>From: ${Number(from[0]).toFixed(5)}, ${Number(from[1]).toFixed(5)}<br>To: ${Number(to[0]).toFixed(5)}, ${Number(to[1]).toFixed(5)}</small></div>`;
+  }
+  return "";
+}
+
+function formatDropPopupHtml(st) {
+  const legs = mapPopupLegsHtml(st.from, st.to);
+
+  const clock = st.updatedAt.toLocaleTimeString("en-GB", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const ms = String(st.updatedAt.getMilliseconds()).padStart(3, "0");
+  const dirLabel =
+    st.dir === "outbound" ? "→ Toward end" : "← Toward start";
+
+  const top = `<div class="hkt-map-popup-top">
+    <strong>Drop ID: ${st.id}</strong>
+    <div class="hkt-map-popup-meta">Alt: ${st.altM ?? "—"}m AGL · Speed: ${st.speedMps ?? "—"}m/s</div>
+    ${legs}
+  </div>`;
+
+  return `${top}<div class="hkt-map-popup-live hkt-drop-popup">
+    <div class="hkt-drop-popup-time">${clock}.${ms}</div>
+    <div class="hkt-drop-popup-row"><span>Position</span><span>${st.lng.toFixed(5)}, ${st.lat.toFixed(5)}</span></div>
+    <div class="hkt-drop-popup-row"><span>Leg progress</span><span>${st.alongPct}%</span></div>
+    <div class="hkt-drop-popup-row"><span>Motion</span><span>${dirLabel}</span></div>
+    <div class="hkt-drop-popup-foot">Cycle ${(st.periodMs / 1000).toFixed(1)}s · delivery · live</div>
+  </div>`;
+}
+
+function formatDronePopupHtml(st) {
+  const legs = st.isOpenLeg
+    ? mapPopupLegsHtml(st.from, st.to)
+    : `<div class="hkt-map-popup-legs"><small>Closed patrol route</small></div>`;
+
+  const clock = st.updatedAt.toLocaleTimeString("en-GB", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const ms = String(st.updatedAt.getMilliseconds()).padStart(3, "0");
+  const progLabel = st.isOpenLeg ? "Leg progress" : "Route position";
+
+  const top = `<div class="hkt-map-popup-top">
+    <strong>Drone ID: ${st.id}</strong>
+    <div class="hkt-map-popup-meta">Alt: ${st.altM ?? "—"}m AGL · Speed: ${st.speedMps ?? "—"}m/s</div>
+    ${legs}
+  </div>`;
+
+  return `${top}<div class="hkt-map-popup-live hkt-drop-popup">
+    <div class="hkt-drop-popup-time">${clock}.${ms}</div>
+    <div class="hkt-drop-popup-row"><span>Position</span><span>${st.lng.toFixed(5)}, ${st.lat.toFixed(5)}</span></div>
+    <div class="hkt-drop-popup-row"><span>${progLabel}</span><span>${st.alongPct}%</span></div>
+    <div class="hkt-drop-popup-row"><span>Motion</span><span>${st.motionLabel}</span></div>
+    <div class="hkt-drop-popup-foot">Cycle ${(st.periodMs / 1000).toFixed(1)}s · fleet · live</div>
+  </div>`;
+}
+
+function cloneRoutes(routes) {
+  return routes.map((r) => ({
+    ...r,
+    path: r.path.map((c) => [...c]),
+    ...(r.from ? { from: [...r.from] } : {}),
+    ...(r.to ? { to: [...r.to] } : {}),
+  }));
+}
 
 function App() {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
-  const droneRoutesRef = useRef(DRONE_ROUTES);
+  const droneRoutesRef = useRef(cloneRoutes(DRONE_ROUTES));
+  const nfzContextRef = useRef(null);
+  const deliveryDropRoutesRef = useRef([]);
+  const dropSelectionRef = useRef(null);
+  const droneSelectionRef = useRef(null);
+  const mapFleetLayersReadyRef = useRef(false);
   const [leftTab, setLeftTab] = useState("overview");
   const [dateTime, setDateTime] = useState("");
   const [is3D, setIs3D] = useState(false);
@@ -70,21 +166,20 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    const replotMs = 75 * 1000;
 
-    async function syncPaths() {
-      const next = await fetchDroneRoutesWithFallback();
+    function replotRoutes() {
       if (cancelled) return;
-      droneRoutesRef.current = next;
-      const m = mapRef.current;
-      const pathSrc = m?.getSource?.("drone-paths");
+      droneRoutesRef.current = cloneRoutes(
+        generatePlannedDroneRoutes(nfzContextRef.current)
+      );
+      const pathSrc = mapRef.current?.getSource?.("drone-paths");
       if (pathSrc) {
-        pathSrc.setData(routesToPathLineCollection(next));
+        pathSrc.setData(routesToPathLineCollection(droneRoutesRef.current));
       }
     }
 
-    syncPaths();
-    const pathIntervalMs = 2 * 60 * 1000;
-    const pathId = setInterval(syncPaths, pathIntervalMs);
+    const pathId = setInterval(replotRoutes, replotMs);
     return () => {
       cancelled = true;
       clearInterval(pathId);
@@ -100,51 +195,97 @@ function App() {
     const map = new maplibregl.Map({
       container: el,
       style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-      center: [114.1694, 22.2818],
-      zoom: 15,
+      center: [114.176, 22.298],
+      zoom: 12.6,
       pitch: 0,
       bearing: 0,
+      maxPitch: 85,
+      renderWorldCopies: false,
+      canvasContextAttributes: { antialias: false, powerPreference: "high-performance" },
     });
 
     mapRef.current = map;
+    mapFleetLayersReadyRef.current = false;
 
     const onLoad = () => {
       if (cancelled) return;
 
-      // Load no-fly zones
-      fetch("/Keep-Data-Moving-GS1-IoT-DataHackathon2026/no-fly-zones.geojson")
-        .then((res) => res.json())
-        .then((geojson) => {
-          if (!cancelled && map.getSource("no-fly-zones")) return;
-          if (!cancelled) {
-            map.addSource("no-fly-zones", {
-              type: "geojson",
-              data: geojson,
-            });
+      const base = import.meta.env.BASE_URL || "/";
+      const nfzUrl = `${base.replace(/\/?$/, "/")}no-fly-zones.geojson`;
 
-            map.addLayer({
-              id: "no-fly-zones-fill",
-              type: "fill",
-              source: "no-fly-zones",
-              paint: {
-                "fill-color": "#ef4444",
-                "fill-opacity": 0.3,
-              },
-            });
+      void (async () => {
+        try {
+          const res = await fetch(nfzUrl, { cache: "no-store" });
+          if (!cancelled && res.ok) {
+            const geojson = await res.json();
+            if (!cancelled && !map.getSource("no-fly-zones")) {
+              nfzContextRef.current = buildNfzContext(geojson, 900);
+              droneRoutesRef.current = cloneRoutes(
+                generatePlannedDroneRoutes(nfzContextRef.current)
+              );
+              map.addSource("no-fly-zones", {
+                type: "geojson",
+                data: geojson,
+              });
 
-            map.addLayer({
-              id: "no-fly-zones-outline",
-              type: "line",
-              source: "no-fly-zones",
-              paint: {
-                "line-color": "#ef4444",
-                "line-width": 2,
-                "line-opacity": 0.8,
-              },
-            });
+              map.addLayer({
+                id: "no-fly-zones-fill",
+                type: "fill",
+                source: "no-fly-zones",
+                paint: {
+                  "fill-color": "#ef4444",
+                  "fill-opacity": 0.35,
+                },
+              });
+
+              map.addLayer({
+                id: "no-fly-zones-outline",
+                type: "line",
+                source: "no-fly-zones",
+                paint: {
+                  "line-color": "#dc2626",
+                  "line-width": 2,
+                  "line-opacity": 0.9,
+                },
+              });
+            }
           }
-        })
-        .catch((err) => console.error("Error loading no-fly zones:", err));
+        } catch (e) {
+          console.warn("No-fly zones GeoJSON:", e);
+        }
+
+        if (cancelled) return;
+
+        if (map.getSource("drone-paths")) {
+          mapFleetLayersReadyRef.current = true;
+          return;
+        }
+
+        if (!nfzContextRef.current) {
+          droneRoutesRef.current = cloneRoutes(
+            generatePlannedDroneRoutes(null)
+          );
+        }
+
+        deliveryDropRoutesRef.current = generateDeliveryDropRoutes(
+          nfzContextRef.current
+        );
+
+      map.addSource("delivery-drops", {
+        type: "geojson",
+        data: buildDeliveryDropsGeoJSON(
+          performance.now(),
+          deliveryDropRoutesRef.current,
+          nfzContextRef.current
+        ),
+      });
+
+      map.addSource("delivery-drop-paths", {
+        type: "geojson",
+        data: deliveryDropRoutesToLineCollection(
+          deliveryDropRoutesRef.current
+        ),
+      });
 
       map.addSource("drone-paths", {
         type: "geojson",
@@ -153,7 +294,11 @@ function App() {
 
       map.addSource("drones", {
         type: "geojson",
-        data: buildDroneGeoJSON(performance.now(), droneRoutesRef.current),
+        data: buildDroneGeoJSON(
+          performance.now(),
+          droneRoutesRef.current,
+          nfzContextRef.current
+        ),
       });
 
       map.addLayer({
@@ -168,6 +313,40 @@ function App() {
           "circle-opacity": 0.9,
         },
       });
+
+      map.addLayer(
+        {
+          id: "delivery-drop-paths-line",
+          type: "line",
+          source: "delivery-drop-paths",
+          layout: {
+            "line-join": "round",
+            "line-cap": "round",
+          },
+          paint: {
+            "line-color": ["match", ["get", "status"], "normal", "#10b981", "warning", "#f59e0b", "alert", "#ef4444", "#64748b"],
+            "line-width": 2.5,
+            "line-opacity": 0.7,
+          },
+        },
+        "drones-layer"
+      );
+
+      map.addLayer(
+        {
+          id: "delivery-drops-layer",
+          type: "circle",
+          source: "delivery-drops",
+          paint: {
+            "circle-radius": 8,
+            "circle-color": ["match", ["get", "status"], "normal", "#10b981", "warning", "#f59e0b", "alert", "#ef4444", "#ffffff"],
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#fff",
+            "circle-opacity": 0.9,
+          },
+        },
+        "drones-layer"
+      );
 
       map.addLayer(
         {
@@ -187,12 +366,70 @@ function App() {
         "drones-layer"
       );
 
+      const ANIM_MS = 50;
+      let lastAnimT = 0;
+
       const animateDrones = (time) => {
         if (cancelled) return;
-        const src = map.getSource("drones");
-        if (src) {
-          src.setData(buildDroneGeoJSON(time, droneRoutesRef.current));
+        const tick = time - lastAnimT >= ANIM_MS;
+        if (tick) {
+          lastAnimT = time;
         }
+
+        if (tick) {
+          const src = map.getSource("drones");
+          if (src) {
+            src.setData(
+              buildDroneGeoJSON(
+                time,
+                droneRoutesRef.current,
+                nfzContextRef.current
+              )
+            );
+          }
+          const dropsSrc = map.getSource("delivery-drops");
+          const dropRoutes = deliveryDropRoutesRef.current;
+          if (dropsSrc && dropRoutes?.length) {
+            dropsSrc.setData(
+              buildDeliveryDropsGeoJSON(
+                time,
+                dropRoutes,
+                nfzContextRef.current
+              )
+            );
+          }
+        }
+
+        if (tick) {
+          const dropRoutes = deliveryDropRoutesRef.current;
+          const dropSel = dropSelectionRef.current;
+          if (dropSel?.popup && dropSel.dropId && dropRoutes?.length) {
+            const route = dropRoutes.find((r) => r.id === dropSel.dropId);
+            if (route) {
+              const st = getDeliveryDropLiveState(
+                time,
+                route,
+                nfzContextRef.current
+              );
+              dropSel.popup.setLngLat([st.lng, st.lat]);
+              dropSel.popup.setHTML(formatDropPopupHtml(st));
+            }
+          }
+          const droneSel = droneSelectionRef.current;
+          if (droneSel?.popup && droneSel.droneId) {
+            const st = getDroneLiveState(
+              time,
+              droneSel.droneId,
+              droneRoutesRef.current,
+              nfzContextRef.current
+            );
+            if (st) {
+              droneSel.popup.setLngLat([st.lng, st.lat]);
+              droneSel.popup.setHTML(formatDronePopupHtml(st));
+            }
+          }
+        }
+
         rafId = requestAnimationFrame(animateDrones);
       };
       rafId = requestAnimationFrame(animateDrones);
@@ -200,12 +437,31 @@ function App() {
       const onDroneClick = (e) => {
         if (!e.features?.length) return;
         const feat = e.features[0];
-        const coordinates = feat.geometry.coordinates.slice();
         const id = feat.properties.id;
-        const alt = feat.properties.alt_m ?? "—";
-        const spd = feat.properties.speed_mps ?? "—";
-
-        new maplibregl.Popup().setLngLat(coordinates).setHTML(`<strong>Drone ID: ${id}</strong><br>Alt: ${alt}m AGL<br>Speed: ${spd}m/s`).addTo(map);
+        dropSelectionRef.current?.popup?.remove();
+        dropSelectionRef.current = null;
+        droneSelectionRef.current?.popup?.remove();
+        const st = getDroneLiveState(
+          performance.now(),
+          id,
+          droneRoutesRef.current,
+          nfzContextRef.current
+        );
+        if (!st) return;
+        const popup = new maplibregl.Popup({
+          closeOnClick: false,
+          maxWidth: "300px",
+          className: "hkt-map-popup-anchor",
+        })
+          .setLngLat(feat.geometry.coordinates.slice())
+          .setHTML(formatDronePopupHtml(st))
+          .addTo(map);
+        popup.on("close", () => {
+          if (droneSelectionRef.current?.popup === popup) {
+            droneSelectionRef.current = null;
+          }
+        });
+        droneSelectionRef.current = { popup, droneId: id };
       };
 
       const onEnter = () => {
@@ -215,32 +471,95 @@ function App() {
         map.getCanvas().style.cursor = "";
       };
 
+      const onDropClick = (e) => {
+        if (!e.features?.length) return;
+        const feat = e.features[0];
+        const id = feat.properties.id;
+        const routes = deliveryDropRoutesRef.current;
+        const route = routes.find((r) => r.id === id);
+        if (!route) return;
+        droneSelectionRef.current?.popup?.remove();
+        droneSelectionRef.current = null;
+        dropSelectionRef.current?.popup?.remove();
+        const popup = new maplibregl.Popup({
+          closeOnClick: false,
+          maxWidth: "300px",
+          className: "hkt-map-popup-anchor",
+        })
+          .setLngLat(feat.geometry.coordinates.slice())
+          .setHTML(
+            formatDropPopupHtml(
+              getDeliveryDropLiveState(
+                performance.now(),
+                route,
+                nfzContextRef.current
+              )
+            )
+          )
+          .addTo(map);
+        popup.on("close", () => {
+          if (dropSelectionRef.current?.popup === popup) {
+            dropSelectionRef.current = null;
+          }
+        });
+        dropSelectionRef.current = { popup, dropId: id };
+      };
+
       map.on("click", "drones-layer", onDroneClick);
       map.on("mouseenter", "drones-layer", onEnter);
       map.on("mouseleave", "drones-layer", onLeave);
+      map.on("click", "delivery-drops-layer", onDropClick);
+      map.on("mouseenter", "delivery-drops-layer", onEnter);
+      map.on("mouseleave", "delivery-drops-layer", onLeave);
+
+      mapFleetLayersReadyRef.current = true;
+      })();
     };
 
     map.on("load", onLoad);
 
     return () => {
       cancelled = true;
+      dropSelectionRef.current?.popup?.remove();
+      dropSelectionRef.current = null;
+      droneSelectionRef.current?.popup?.remove();
+      droneSelectionRef.current = null;
       cancelAnimationFrame(rafId);
       map.off("load", onLoad);
+      try {
+        disableMap3D(map);
+      } catch (_) {
+        /* ignore */
+      }
       map.remove();
       mapRef.current = null;
+      mapFleetLayersReadyRef.current = false;
     };
   }, []);
 
   const toggle3D = useCallback(() => {
     const map = mapRef.current;
-    if (!map || !map.loaded()) return;
+    if (!map || !mapFleetLayersReadyRef.current) return;
 
     setIs3D((prev) => {
       const next = !prev;
       if (next) {
-        map.easeTo({ pitch: 60, bearing: -15, duration: 1200 });
+        enableMap3D(map);
+        map.easeTo({
+          pitch: 68,
+          bearing: -32,
+          zoom: Math.min(map.getZoom() + 0.45, 16.4),
+          duration: 1400,
+          essential: true,
+        });
       } else {
-        map.easeTo({ pitch: 0, bearing: 0, duration: 1200 });
+        disableMap3D(map);
+        map.easeTo({
+          pitch: 0,
+          bearing: 0,
+          duration: 1200,
+          essential: true,
+        });
       }
       return next;
     });
@@ -449,8 +768,14 @@ function App() {
         </div>
       </aside>
 
-      <button type="button" id="toggle3dBtn" className={`btn hkt-toggle-3d${is3D ? " hkt-toggle-3d--active" : ""}`} onClick={toggle3D}>
-        {is3D ? "Switch to 2D View (Top-Down)" : "Switch to 3D View (Buildings)"}
+      <button
+        type="button"
+        id="toggle3dBtn"
+        className={`btn hkt-toggle-3d${is3D ? " hkt-toggle-3d--active" : ""}`}
+        onClick={toggle3D}
+        aria-pressed={is3D}
+      >
+        {is3D ? "2D map" : "3D view (buildings)"}
       </button>
     </div>
   );
