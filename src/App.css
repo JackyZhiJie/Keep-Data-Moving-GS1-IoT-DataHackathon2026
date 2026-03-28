@@ -20,49 +20,68 @@
   z-index: 1;
 }
 
-.hkt-fpv-hud {
+/* Picture-in-picture drone camera (main map stays full size). */
+.hkt-drone-pip-wrap {
   position: absolute;
-  top: 76px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
+  right: 20px;
+  bottom: 20px;
+  z-index: 5;
+  width: min(380px, 42vw);
+  padding: 0;
+  overflow: hidden;
   pointer-events: auto;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
 }
 
-.hkt-fpv-hud__title {
-  font-size: 11px;
+.hkt-drone-pip-chrome {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: rgba(15, 23, 42, 0.95);
+  border-bottom: 1px solid #334155;
+}
+
+.hkt-drone-pip-chrome__title {
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.07em;
   color: #94a3b8;
 }
 
-.hkt-fpv-hud__id {
+.hkt-drone-pip-chrome__id {
   font-weight: 700;
   font-family: monospace;
   color: #38bdf8;
+  flex: 1;
+  min-width: 0;
 }
 
-.hkt-fpv-hud__exit {
+.hkt-drone-pip-chrome__close {
   cursor: pointer;
   border: 1px solid #475569;
   background: rgba(56, 189, 248, 0.15);
   color: #e2e8f0;
   border-radius: 6px;
-  padding: 6px 12px;
-  font-size: 13px;
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
-.hkt-fpv-hud__exit:hover {
+.hkt-drone-pip-chrome__close:hover {
   background: rgba(56, 189, 248, 0.28);
 }
 
-.hkt-fpv-hud__hint {
-  font-size: 12px;
+.hkt-drone-pip-chrome__hint {
+  font-size: 11px;
   color: #64748b;
+}
+
+.hkt-drone-pip-canvas {
+  width: 100%;
+  height: 220px;
+  min-height: 180px;
 }
 
 .hkt-fpv-popup-hint {
@@ -94,7 +113,7 @@
 .hkt-top-panel {
   top: 15px;
   left: 360px;
-  right: 340px;
+  right: 20px;
   height: 50px;
   display: flex;
   justify-content: space-between;
@@ -105,14 +124,6 @@
   top: 15px;
   left: 15px;
   width: 320px;
-  bottom: 15px;
-  overflow-y: auto;
-}
-
-.hkt-right-panel {
-  top: 15px;
-  right: 15px;
-  width: 300px;
   bottom: 15px;
   overflow-y: auto;
 }
@@ -144,6 +155,20 @@
   display: flex;
   border-bottom: 1px solid #445;
   margin-bottom: 15px;
+}
+
+.tabs--three {
+  flex-wrap: wrap;
+  gap: 2px 4px;
+}
+
+.tabs--three .tab-btn {
+  padding: 7px 8px;
+  font-size: 12px;
+  margin-right: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
 }
 
 .tab-btn {
@@ -446,28 +471,17 @@
     gap: 8px;
   }
 
-  .hkt-left-panel,
-  .hkt-right-panel {
+  .hkt-left-panel {
     width: min(320px, calc(50vw - 20px));
     max-height: 40vh;
     font-size: 13px;
-  }
-
-  .hkt-left-panel {
     top: 15px;
-    bottom: auto;
-  }
-
-  .hkt-right-panel {
-    top: 15px;
-    left: auto;
     bottom: auto;
   }
 }
 
 @media (max-width: 640px) {
-  .hkt-left-panel,
-  .hkt-right-panel {
+  .hkt-left-panel {
     position: relative;
     width: auto;
     left: 15px;

@@ -21,6 +21,9 @@ import { disableMap3D, enableMap3D } from "./map3d.js";
 import { generatePlannedDroneRoutes } from "./routePlanner.js";
 import "./App.css";
 
+const BASEMAP_STYLE_URL =
+  "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+
 function mapPopupLegsHtml(from, to) {
   if (
     from &&
@@ -42,7 +45,7 @@ function formatFleetDotPopupHtml(st, opts = {}) {
 
   const fpvNote =
     opts.showDroneFpvNote && st.dotKind === "drone"
-      ? `<div class="hkt-fpv-popup-hint"><small>Drone FPV: the 3D map camera follows this aircraft forward. Press <kbd>Esc</kbd> or <strong>Exit FPV</strong> in the top bar to release the view.</small></div>`
+      ? `<div class="hkt-fpv-popup-hint"><small>Live drone camera opens in the <strong>picture window</strong> (2D or 3D map). Press <kbd>Esc</kbd> or <strong>Close</strong> on that window to stop.</small></div>`
       : "";
 
   const clock = st.updatedAt.toLocaleTimeString("en-GB", {
@@ -91,6 +94,8 @@ function cloneRoutes(routes) {
 
 function App() {
   const mapContainerRef = useRef(null);
+  const pipContainerRef = useRef(null);
+  const pipMapRef = useRef(null);
   const mapRef = useRef(null);
   const droneRoutesRef = useRef(cloneRoutes(DRONE_ROUTES));
   const nfzContextRef = useRef(null);
@@ -163,16 +168,124 @@ function App() {
   const exitDroneFpv = useCallback(() => {
     droneFpvIdRef.current = null;
     setFpvDroneId(null);
-    const m = mapRef.current;
-    if (m?.dragPan?.enable) {
-      m.dragPan.enable();
-      m.scrollZoom.enable();
+    const pip = pipMapRef.current;
+    if (pip) {
+      try {
+        disableMap3D(pip);
+      } catch {
+        /* ignore */
+      }
+      try {
+        pip.remove();
+      } catch {
+        /* ignore */
+      }
+      pipMapRef.current = null;
     }
   }, []);
 
   useEffect(() => {
     exitDroneFpvRef.current = exitDroneFpv;
   }, [exitDroneFpv]);
+
+  /** Second MapLibre map: inset only, not full-screen. */
+  useEffect(() => {
+    if (!fpvDroneId) return;
+    const el = pipContainerRef.current;
+    if (!el) return;
+
+    if (pipMapRef.current) {
+      const id = requestAnimationFrame(() => pipMapRef.current?.resize());
+      return () => cancelAnimationFrame(id);
+    }
+
+    const pip = new maplibregl.Map({
+      container: el,
+      style: BASEMAP_STYLE_URL,
+      interactive: false,
+      attributionControl: false,
+      maxPitch: 85,
+      renderWorldCopies: false,
+      canvasContextAttributes: { antialias: false, powerPreference: "high-performance" },
+    });
+    pipMapRef.current = pip;
+
+    const onPipLoad = () => {
+      if (is3DRef.current) {
+        try {
+          enableMap3D(pip);
+        } catch {
+          /* ignore */
+        }
+      }
+      pip.resize();
+    };
+    pip.on("load", onPipLoad);
+
+    return () => {
+      try {
+        pip.off("load", onPipLoad);
+      } catch {
+        /* map may already be removed */
+      }
+    };
+  }, [fpvDroneId]);
+
+  /** Match inset 3D buildings to main map mode. */
+  useEffect(() => {
+    const pip = pipMapRef.current;
+    if (!pip || !fpvDroneId) return;
+    if (!pip.loaded()) return;
+    try {
+      if (is3D) {
+        enableMap3D(pip);
+      } else {
+        disableMap3D(pip);
+      }
+      requestAnimationFrame(() => pip.resize());
+    } catch {
+      /* ignore */
+    }
+  }, [is3D, fpvDroneId]);
+
+  /** Drone camera → inset map only (main map unchanged). */
+  useEffect(() => {
+    if (!fpvDroneId) return;
+    let raf = 0;
+    const loop = () => {
+      const pip = pipMapRef.current;
+      if (
+        pip &&
+        pip.loaded() &&
+        typeof pip.calculateCameraOptionsFromTo === "function"
+      ) {
+        const pair = getDroneCameraLookPair(
+          performance.now(),
+          fpvDroneId,
+          droneRoutesRef.current,
+          nfzContextRef.current
+        );
+        if (pair) {
+          try {
+            const opts = pip.calculateCameraOptionsFromTo(
+              new maplibregl.LngLat(pair.camLng, pair.camLat),
+              pair.camAltM,
+              new maplibregl.LngLat(pair.lookLng, pair.lookLat),
+              pair.lookAtAltM
+            );
+            const pitch = Math.min(60, Math.max(26, opts.pitch ?? 50));
+            const zoom = Math.min(18.4, Math.max(14.2, opts.zoom ?? 16));
+            pip.jumpTo({ ...opts, pitch, zoom, essential: true });
+          } catch {
+            /* degenerate from/to */
+          }
+        }
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [fpvDroneId]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -229,7 +342,7 @@ function App() {
     let rafId = 0;
     const map = new maplibregl.Map({
       container: el,
-      style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+      style: BASEMAP_STYLE_URL,
       center: [114.176, 22.298],
       zoom: 12.6,
       pitch: 0,
@@ -529,38 +642,8 @@ function App() {
             if (st) {
               droneSel.popup.setLngLat([st.lng, st.lat]);
               droneSel.popup.setHTML(
-                formatFleetDotPopupHtml(st, {
-                  showDroneFpvNote: is3DRef.current,
-                })
+                formatFleetDotPopupHtml(st, { showDroneFpvNote: true })
               );
-            }
-          }
-        }
-
-        if (
-          is3DRef.current &&
-          droneFpvIdRef.current &&
-          typeof map.calculateCameraOptionsFromTo === "function"
-        ) {
-          const pair = getDroneCameraLookPair(
-            time,
-            droneFpvIdRef.current,
-            droneRoutesRef.current,
-            nfzContextRef.current
-          );
-          if (pair) {
-            try {
-              const opts = map.calculateCameraOptionsFromTo(
-                new maplibregl.LngLat(pair.camLng, pair.camLat),
-                pair.camAltM,
-                new maplibregl.LngLat(pair.lookLng, pair.lookLat),
-                pair.lookAtAltM
-              );
-              const pitch = Math.min(60, Math.max(26, opts.pitch ?? 50));
-              const zoom = Math.min(18.4, Math.max(14.2, opts.zoom ?? 16));
-              map.jumpTo({ ...opts, pitch, zoom, essential: true });
-            } catch {
-              /* degenerate from/to */
             }
           }
         }
@@ -583,30 +666,15 @@ function App() {
           nfzContextRef.current
         );
         if (!st) return;
-        if (is3DRef.current) {
-          droneFpvIdRef.current = id;
-          setFpvDroneId(id);
-          try {
-            map.dragPan.disable();
-            map.scrollZoom.disable();
-          } catch {
-            /* ignore */
-          }
-        } else {
-          droneFpvIdRef.current = null;
-          setFpvDroneId(null);
-        }
+        droneFpvIdRef.current = id;
+        setFpvDroneId(id);
         const popup = new maplibregl.Popup({
           closeOnClick: false,
           maxWidth: "300px",
           className: "hkt-map-popup-anchor",
         })
           .setLngLat(feat.geometry.coordinates.slice())
-          .setHTML(
-            formatFleetDotPopupHtml(st, {
-              showDroneFpvNote: is3DRef.current,
-            })
-          )
+          .setHTML(formatFleetDotPopupHtml(st, { showDroneFpvNote: true }))
           .addTo(map);
         popup.on("close", () => {
           if (droneSelectionRef.current?.popup === popup) {
@@ -636,14 +704,7 @@ function App() {
         droneSelectionRef.current?.popup?.remove();
         droneSelectionRef.current = null;
         dropSelectionRef.current?.popup?.remove();
-        droneFpvIdRef.current = null;
-        setFpvDroneId(null);
-        try {
-          map.dragPan.enable();
-          map.scrollZoom.enable();
-        } catch {
-          /* ignore */
-        }
+        exitDroneFpvRef.current();
         const popup = new maplibregl.Popup({
           closeOnClick: false,
           maxWidth: "300px",
@@ -719,7 +780,6 @@ function App() {
           essential: true,
         });
       } else {
-        exitDroneFpvRef.current();
         disableMap3D(map);
         map.easeTo({
           pitch: 0,
@@ -735,17 +795,24 @@ function App() {
   return (
     <div className="hkt-dashboard">
       {fpvDroneId ? (
-        <div className="hkt-fpv-hud panel" role="status" aria-live="polite">
-          <span className="hkt-fpv-hud__title">Drone FPV</span>
-          <span className="hkt-fpv-hud__id">{fpvDroneId}</span>
-          <button
-            type="button"
-            className="hkt-fpv-hud__exit"
-            onClick={() => exitDroneFpv()}
-          >
-            Exit FPV
-          </button>
-          <span className="hkt-fpv-hud__hint">Esc</span>
+        <div
+          className="hkt-drone-pip-wrap panel"
+          role="region"
+          aria-label={`Live drone camera ${fpvDroneId}`}
+        >
+          <div className="hkt-drone-pip-chrome">
+            <span className="hkt-drone-pip-chrome__title">Drone camera</span>
+            <span className="hkt-drone-pip-chrome__id">{fpvDroneId}</span>
+            <button
+              type="button"
+              className="hkt-drone-pip-chrome__close"
+              onClick={() => exitDroneFpv()}
+            >
+              Close
+            </button>
+            <span className="hkt-drone-pip-chrome__hint">Esc</span>
+          </div>
+          <div ref={pipContainerRef} className="hkt-drone-pip-canvas" />
         </div>
       ) : null}
       <div ref={mapContainerRef} className="hkt-map" aria-hidden />
@@ -756,12 +823,15 @@ function App() {
       </header>
 
       <aside className="panel hkt-left-panel">
-        <div className="tabs" role="tablist" aria-label="Fleet sections">
+        <div className="tabs tabs--three" role="tablist" aria-label="Fleet sections">
           <button type="button" role="tab" aria-selected={leftTab === "overview"} className={`tab-btn${leftTab === "overview" ? " active" : ""}`} onClick={() => setLeftTab("overview")}>
             Overview
           </button>
           <button type="button" role="tab" aria-selected={leftTab === "logistics"} className={`tab-btn${leftTab === "logistics" ? " active" : ""}`} onClick={() => setLeftTab("logistics")}>
-            Parking &amp; Battery
+            Parking
+          </button>
+          <button type="button" role="tab" aria-selected={leftTab === "advisory"} className={`tab-btn${leftTab === "advisory" ? " active" : ""}`} onClick={() => setLeftTab("advisory")}>
+            Advisory
           </button>
         </div>
 
@@ -909,44 +979,46 @@ function App() {
             </div>
           </div>
         )}
-      </aside>
 
-      <aside className="panel hkt-right-panel">
-        <h3>AI Advisory</h3>
-        <div className="card">
-          {env?.hkoForecastDesc && !envLoading && (
-            <p className="hkt-advisory-context">
-              <span className="hkt-advisory-label">HKO context</span>
-              {env.hkoForecastDesc}
-            </p>
-          )}
-          <p className="hkt-advisory">&quot;Airspace congestion predicted over Central district in 15 minutes. Suggest rerouting non-critical flights.&quot;</p>
-        </div>
+        {leftTab === "advisory" && (
+          <div className="tab-content" role="tabpanel">
+            <h3>AI Advisory</h3>
+            <div className="card">
+              {env?.hkoForecastDesc && !envLoading && (
+                <p className="hkt-advisory-context">
+                  <span className="hkt-advisory-label">HKO context</span>
+                  {env.hkoForecastDesc}
+                </p>
+              )}
+              <p className="hkt-advisory">&quot;Airspace congestion predicted over Central district in 15 minutes. Suggest rerouting non-critical flights.&quot;</p>
+            </div>
 
-        <h3>Active Alarms</h3>
-        <div className="card alert-red">
-          <p className="hkt-alarm-title">
-            <strong>[10:14 AM] ⚠️ Collision Risk</strong>
-          </p>
-          <p className="hkt-alarm-body">Drone-A &amp; Drone-B proximity breach in Sector 4 (Altitude: 120m).</p>
-          <button type="button" className="btn btn-action">
-            Force RTH (Return to Home)
-          </button>
-        </div>
+            <h3>Active Alarms</h3>
+            <div className="card alert-red">
+              <p className="hkt-alarm-title">
+                <strong>[10:14 AM] ⚠️ Collision Risk</strong>
+              </p>
+              <p className="hkt-alarm-body">Drone-A &amp; Drone-B proximity breach in Sector 4 (Altitude: 120m).</p>
+              <button type="button" className="btn btn-action">
+                Force RTH (Return to Home)
+              </button>
+            </div>
 
-        <div className="card alert-yellow">
-          <p className="hkt-alarm-title">
-            <strong>[10:12 AM] ⚠️ Strong Wind Warning</strong>
-          </p>
-          <p className="hkt-alarm-body">Gusts up to 35 km/h detected near Victoria Peak. Check drone stability.</p>
-        </div>
+            <div className="card alert-yellow">
+              <p className="hkt-alarm-title">
+                <strong>[10:12 AM] ⚠️ Strong Wind Warning</strong>
+              </p>
+              <p className="hkt-alarm-body">Gusts up to 35 km/h detected near Victoria Peak. Check drone stability.</p>
+            </div>
 
-        <div className="card alert-yellow">
-          <p className="hkt-alarm-title">
-            <strong>[10:05 AM] 🔋 Low Battery</strong>
-          </p>
-          <p className="hkt-alarm-body">Drone ID-892 battery at 15%. Initiating auto-landing protocol to Cyberport Hub.</p>
-        </div>
+            <div className="card alert-yellow">
+              <p className="hkt-alarm-title">
+                <strong>[10:05 AM] 🔋 Low Battery</strong>
+              </p>
+              <p className="hkt-alarm-body">Drone ID-892 battery at 15%. Initiating auto-landing protocol to Cyberport Hub.</p>
+            </div>
+          </div>
+        )}
       </aside>
 
       <button

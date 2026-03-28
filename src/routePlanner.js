@@ -178,12 +178,12 @@ export function planRouteFromTo(from, to, nfzContext, rand, bbox = DEFAULT_FLIGH
   return null;
 }
 
-/** Same alt / speed / status for every fleet dot (map + detail parity with delivery drops). */
+/** Distinct cruise alt per drone → different 3D corridor height (corridor3d uses altM). */
 const DRONE_META = [
-  { id: "D-01", status: "normal", periodMs: 82000, phase: 0, altM: 112, speedMps: 13 },
-  { id: "D-02", status: "normal", periodMs: 96000, phase: 0.17, altM: 112, speedMps: 13 },
-  { id: "D-03", status: "normal", periodMs: 70000, phase: 0.41, altM: 112, speedMps: 13 },
-  { id: "D-04", status: "normal", periodMs: 88000, phase: 0.08, altM: 112, speedMps: 13 },
+  { id: "D-01", status: "normal", periodMs: 82000, phase: 0, altM: 96, speedMps: 13 },
+  { id: "D-02", status: "normal", periodMs: 96000, phase: 0.17, altM: 118, speedMps: 13 },
+  { id: "D-03", status: "normal", periodMs: 70000, phase: 0.41, altM: 142, speedMps: 13 },
+  { id: "D-04", status: "normal", periodMs: 88000, phase: 0.08, altM: 108, speedMps: 13 },
 ];
 
 /**
