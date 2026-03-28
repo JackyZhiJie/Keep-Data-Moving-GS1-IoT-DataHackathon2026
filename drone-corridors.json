@@ -1,0 +1,102 @@
+{
+  "type": "FeatureCollection",
+  "meta": {
+    "title": "UAV low-altitude corridors (demo)",
+    "source": "Local open data file — replace URL with VITE_DRONE_PATHS_URL or publish to your API",
+    "updated": "2026-03-28T00:00:00+08:00"
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "D-01",
+        "status": "normal",
+        "periodMs": 88000,
+        "phase": 0,
+        "altM": 118,
+        "speedMps": 14
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [114.158, 22.284],
+          [114.166, 22.289],
+          [114.174, 22.286],
+          [114.172, 22.279],
+          [114.163, 22.276],
+          [114.155, 22.28],
+          [114.158, 22.284]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "D-02",
+        "status": "warning",
+        "periodMs": 102000,
+        "phase": 0.22,
+        "altM": 95,
+        "speedMps": 11
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [114.168, 22.292],
+          [114.178, 22.29],
+          [114.181, 22.282],
+          [114.175, 22.275],
+          [114.165, 22.277],
+          [114.162, 22.285],
+          [114.168, 22.292]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "D-03",
+        "status": "alert",
+        "periodMs": 72000,
+        "phase": 0.55,
+        "altM": 132,
+        "speedMps": 16
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [114.152, 22.281],
+          [114.158, 22.287],
+          [114.169, 22.288],
+          [114.171, 22.279],
+          [114.16, 22.274],
+          [114.148, 22.278],
+          [114.152, 22.281]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "D-04",
+        "status": "normal",
+        "periodMs": 95000,
+        "phase": 0.08,
+        "altM": 105,
+        "speedMps": 13
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [114.175, 22.278],
+          [114.182, 22.275],
+          [114.185, 22.268],
+          [114.178, 22.265],
+          [114.17, 22.268],
+          [114.168, 22.274],
+          [114.175, 22.278]
+        ]
+      }
+    }
+  ]
+}
