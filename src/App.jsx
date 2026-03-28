@@ -1,40 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { fetchCyberportEnvironment } from "./environmentWeather.js";
+import { fetchDroneRoutesWithFallback } from "./dronePathsApi.js";
+import {
+  buildDroneGeoJSON,
+  DRONE_ROUTES,
+  routesToPathLineCollection,
+} from "./droneSim.js";
 import "./App.css";
-
-const DRONE_GEOJSON = {
-  type: "FeatureCollection",
-  features: [
-    {
-      type: "Feature",
-      properties: { status: "normal", id: "D-01" },
-      geometry: { type: "Point", coordinates: [114.1694, 22.2818] },
-    },
-    {
-      type: "Feature",
-      properties: { status: "warning", id: "D-02" },
-      geometry: { type: "Point", coordinates: [114.172, 22.2835] },
-    },
-    {
-      type: "Feature",
-      properties: { status: "alert", id: "D-03" },
-      geometry: { type: "Point", coordinates: [114.165, 22.28] },
-    },
-    {
-      type: "Feature",
-      properties: { status: "normal", id: "D-04" },
-      geometry: { type: "Point", coordinates: [114.168, 22.278] },
-    },
-  ],
-};
 
 function App() {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
+  const droneRoutesRef = useRef(DRONE_ROUTES);
   const [leftTab, setLeftTab] = useState("overview");
   const [dateTime, setDateTime] = useState("");
   const [is3D, setIs3D] = useState(false);
+  const [env, setEnv] = useState(null);
+  const [envLoading, setEnvLoading] = useState(true);
+  const [envError, setEnvError] = useState(null);
 
   useEffect(() => {
     const tick = () => {
@@ -56,10 +41,69 @@ function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadEnv() {
+      setEnvLoading(true);
+      setEnvError(null);
+      try {
+        const data = await fetchCyberportEnvironment();
+        if (cancelled) return;
+        setEnv(data);
+        const allMissing =
+          data.tempC == null &&
+          !data.windText &&
+          !data.visibilityText;
+        if (allMissing && data.errors.length > 0) {
+          setEnvError(data.errors.join(" "));
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setEnvError(e?.message || "Weather request failed.");
+        }
+      } finally {
+        if (!cancelled) setEnvLoading(false);
+      }
+    }
+
+    loadEnv();
+    const intervalMs = 10 * 60 * 1000;
+    const id = setInterval(loadEnv, intervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function syncPaths() {
+      const next = await fetchDroneRoutesWithFallback();
+      if (cancelled) return;
+      droneRoutesRef.current = next;
+      const m = mapRef.current;
+      const pathSrc = m?.getSource?.("drone-paths");
+      if (pathSrc) {
+        pathSrc.setData(routesToPathLineCollection(next));
+      }
+    }
+
+    syncPaths();
+    const pathIntervalMs = 2 * 60 * 1000;
+    const pathId = setInterval(syncPaths, pathIntervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(pathId);
+    };
+  }, []);
+
+  useEffect(() => {
     const el = mapContainerRef.current;
     if (!el) return;
 
     let cancelled = false;
+    let rafId = 0;
     const map = new maplibregl.Map({
       container: el,
       style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
@@ -74,7 +118,18 @@ function App() {
     const onLoad = () => {
       if (cancelled) return;
 
-      map.addSource("drones", { type: "geojson", data: DRONE_GEOJSON });
+      map.addSource("drone-paths", {
+        type: "geojson",
+        data: routesToPathLineCollection(droneRoutesRef.current),
+      });
+
+      map.addSource("drones", {
+        type: "geojson",
+        data: buildDroneGeoJSON(
+          performance.now(),
+          droneRoutesRef.current
+        ),
+      });
 
       map.addLayer({
         id: "drones-layer",
@@ -99,16 +154,58 @@ function App() {
         },
       });
 
+      map.addLayer(
+        {
+          id: "drone-paths-line",
+          type: "line",
+          source: "drone-paths",
+          layout: {
+            "line-join": "round",
+            "line-cap": "round",
+          },
+          paint: {
+            "line-color": [
+              "match",
+              ["get", "status"],
+              "normal",
+              "#10b981",
+              "warning",
+              "#f59e0b",
+              "alert",
+              "#ef4444",
+              "#64748b",
+            ],
+            "line-width": 2.5,
+            "line-opacity": 0.7,
+          },
+        },
+        "drones-layer"
+      );
+
+      const animateDrones = (time) => {
+        if (cancelled) return;
+        const src = map.getSource("drones");
+        if (src) {
+          src.setData(
+            buildDroneGeoJSON(time, droneRoutesRef.current)
+          );
+        }
+        rafId = requestAnimationFrame(animateDrones);
+      };
+      rafId = requestAnimationFrame(animateDrones);
+
       const onDroneClick = (e) => {
         if (!e.features?.length) return;
         const feat = e.features[0];
         const coordinates = feat.geometry.coordinates.slice();
         const id = feat.properties.id;
+        const alt = feat.properties.alt_m ?? "—";
+        const spd = feat.properties.speed_mps ?? "—";
 
         new maplibregl.Popup()
           .setLngLat(coordinates)
           .setHTML(
-            `<strong>Drone ID: ${id}</strong><br>Alt: 120m<br>Speed: 15m/s`
+            `<strong>Drone ID: ${id}</strong><br>Alt: ${alt}m AGL<br>Speed: ${spd}m/s`
           )
           .addTo(map);
       };
@@ -129,6 +226,7 @@ function App() {
 
     return () => {
       cancelled = true;
+      cancelAnimationFrame(rafId);
       map.off("load", onLoad);
       map.remove();
       mapRef.current = null;
@@ -213,17 +311,91 @@ function App() {
             <h3>Environment (HK Observatory)</h3>
             <div className="card alert-green">
               <p className="hkt-card-block">
-                <strong>Location:</strong> Cyberport, HK
+                <strong>Location:</strong>{" "}
+                {env?.locationLabel ?? "Cyberport, HK"}
               </p>
               <p className="hkt-card-block">
-                <strong>Wind:</strong> 12 km/h NE
+                <strong>Wind:</strong>{" "}
+                {envLoading
+                  ? "…"
+                  : env?.windText ?? "—"}
               </p>
               <p className="hkt-card-block">
-                <strong>Visibility:</strong> 8.5 km (Good)
+                <strong>Visibility:</strong>{" "}
+                {envLoading
+                  ? "…"
+                  : env?.visibilityText ?? "—"}
               </p>
               <p className="hkt-card-block">
-                <strong>Temp:</strong> 24°C
+                <strong>Temp:</strong>{" "}
+                {envLoading
+                  ? "…"
+                  : env?.tempC != null
+                    ? `${env.tempC}°C`
+                    : "—"}
               </p>
+              {env?.tempStation && !envLoading && env?.tempC != null && (
+                <p className="hkt-env-meta">
+                  Air temperature from HKO station: {env.tempStation}
+                  {env.humidityPct != null && (
+                    <>
+                      {" "}
+                      · Humidity {env.humidityPct}%
+                      {env.humidityPlace ? ` (${env.humidityPlace})` : ""}
+                    </>
+                  )}
+                </p>
+              )}
+              {(env?.hkoForecastDesc || env?.hkoForecastPeriod) &&
+                !envLoading && (
+                  <div className="hkt-hko-forecast">
+                    {env.hkoForecastPeriod && (
+                      <p className="hkt-hko-forecast-title">
+                        <strong>{env.hkoForecastPeriod}</strong>
+                        {env.hkoForecastUpdateTime && (
+                          <span className="hkt-hko-forecast-time">
+                            {" "}
+                            · {env.hkoForecastUpdateTime}
+                          </span>
+                        )}
+                      </p>
+                    )}
+                    {env.hkoForecastDesc && (
+                      <p className="hkt-hko-forecast-desc">
+                        {env.hkoForecastDesc}
+                      </p>
+                    )}
+                    <p className="hkt-env-inline-src">
+                      Source: Hong Kong Observatory Open Data API (
+                      <code>flw</code>) via{" "}
+                      <a
+                        href="https://data.gov.hk/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        DATA.GOV.HK
+                      </a>
+                      .
+                    </p>
+                  </div>
+                )}
+              <p className="hkt-env-sources">
+                Regional temperature/humidity: HKO <code>rhrread</code>. Wind
+                &amp; visibility:{" "}
+                <a
+                  href="https://open-meteo.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open-Meteo
+                </a>{" "}
+                (grid over Cyberport). Refreshed every 10 min.
+              </p>
+              {envError && (
+                <p className="hkt-env-error" role="alert">
+                  {envError}
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -313,6 +485,12 @@ function App() {
       <aside className="panel hkt-right-panel">
         <h3>AI Advisory</h3>
         <div className="card">
+          {env?.hkoForecastDesc && !envLoading && (
+            <p className="hkt-advisory-context">
+              <span className="hkt-advisory-label">HKO context</span>
+              {env.hkoForecastDesc}
+            </p>
+          )}
           <p className="hkt-advisory">
             &quot;Airspace congestion predicted over Central district in 15
             minutes. Suggest rerouting non-critical flights.&quot;

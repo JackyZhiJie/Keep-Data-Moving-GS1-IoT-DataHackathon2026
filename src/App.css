@@ -243,6 +243,85 @@
   margin-bottom: 5px;
 }
 
+.hkt-env-meta {
+  display: block;
+  margin: 8px 0 0 0;
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.hkt-env-sources {
+  display: block;
+  margin: 10px 0 0 0;
+  font-size: 10px;
+  color: #64748b;
+  line-height: 1.35;
+}
+
+.hkt-env-error {
+  display: block;
+  margin: 8px 0 0 0;
+  font-size: 12px;
+  color: #fca5a5;
+}
+
+.hkt-hko-forecast {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(68, 85, 85, 0.6);
+}
+
+.hkt-hko-forecast-title {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+  color: #cbd5e1;
+}
+
+.hkt-hko-forecast-time {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: normal;
+}
+
+.hkt-hko-forecast-desc {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #e2e8f0;
+}
+
+.hkt-env-inline-src {
+  margin: 0;
+  font-size: 10px;
+  color: #64748b;
+  line-height: 1.35;
+}
+
+.hkt-env-inline-src a,
+.hkt-env-sources a {
+  color: #4facfe;
+}
+
+.hkt-advisory-context {
+  margin: 0 0 12px 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(68, 85, 85, 0.5);
+  font-size: 12px;
+  line-height: 1.45;
+  color: #94a3b8;
+  font-style: normal;
+}
+
+.hkt-advisory-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #4facfe;
+}
+
 .hkt-divider {
   border: 0;
   border-top: 1px solid #445;
