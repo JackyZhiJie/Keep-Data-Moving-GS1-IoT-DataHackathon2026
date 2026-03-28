@@ -329,6 +329,12 @@
   margin-bottom: 5px;
 }
 
+.hkt-env-place {
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 8px;
+}
+
 .hkt-env-meta {
   display: block;
   margin: 8px 0 0 0;
@@ -377,14 +383,6 @@
   color: #e2e8f0;
 }
 
-.hkt-env-inline-src {
-  margin: 0;
-  font-size: 10px;
-  color: #64748b;
-  line-height: 1.35;
-}
-
-.hkt-env-inline-src a,
 .hkt-env-sources a {
   color: #4facfe;
 }

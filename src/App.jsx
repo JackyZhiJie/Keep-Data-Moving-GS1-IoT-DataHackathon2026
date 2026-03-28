@@ -78,7 +78,7 @@ function formatFleetDotPopupHtml(st, opts = {}) {
     <div class="hkt-drop-popup-row"><span>Battery</span><span>${batt}</span></div>
     <div class="hkt-drop-popup-row"><span>${progLabel}</span><span>${st.alongPct}%</span></div>
     <div class="hkt-drop-popup-row"><span>Motion</span><span>${st.motionLabel}</span></div>
-    <div class="hkt-drop-popup-row"><span>3D corridor</span><span>${st.corridorAltM ?? "—"}m AGL <small>(zone + wave)</small></span></div>
+    <div class="hkt-drop-popup-row"><span>3D corridor</span><span>${st.corridorAltM ?? "—"}m AGL <small>(cruise)</small></span></div>
     <div class="hkt-drop-popup-foot">Cycle ${(st.periodMs / 1000).toFixed(1)}s · live</div>
   </div>`;
 }
@@ -863,11 +863,9 @@ function App() {
               </p>
             </div>
 
-            <h3>Environment (HK Observatory)</h3>
+            <h3>Weather</h3>
             <div className="card alert-green">
-              <p className="hkt-card-block">
-                <strong>Location:</strong> {env?.locationLabel ?? "Cyberport, HK"}
-              </p>
+              <p className="hkt-card-block hkt-env-place">{env?.locationLabel ?? "Cyberport, HK"}</p>
               <p className="hkt-card-block">
                 <strong>Wind:</strong> {envLoading ? "…" : env?.windText ?? "—"}
               </p>
@@ -879,39 +877,16 @@ function App() {
               </p>
               {env?.tempStation && !envLoading && env?.tempC != null && (
                 <p className="hkt-env-meta">
-                  Air temperature from HKO station: {env.tempStation}
-                  {env.humidityPct != null && (
-                    <>
-                      {" "}
-                      · Humidity {env.humidityPct}%{env.humidityPlace ? ` (${env.humidityPlace})` : ""}
-                    </>
-                  )}
+                  {env.tempStation}
+                  {env.humidityPct != null && <> · {env.humidityPct}% RH</>}
                 </p>
               )}
-              {(env?.hkoForecastDesc || env?.hkoForecastPeriod) && !envLoading && (
-                <div className="hkt-hko-forecast">
-                  {env.hkoForecastPeriod && (
-                    <p className="hkt-hko-forecast-title">
-                      <strong>{env.hkoForecastPeriod}</strong>
-                      {env.hkoForecastUpdateTime && <span className="hkt-hko-forecast-time"> · {env.hkoForecastUpdateTime}</span>}
-                    </p>
-                  )}
-                  {env.hkoForecastDesc && <p className="hkt-hko-forecast-desc">{env.hkoForecastDesc}</p>}
-                  <p className="hkt-env-inline-src">
-                    Source: Hong Kong Observatory Open Data API (<code>flw</code>) via{" "}
-                    <a href="https://data.gov.hk/" target="_blank" rel="noopener noreferrer">
-                      DATA.GOV.HK
-                    </a>
-                    .
-                  </p>
-                </div>
-              )}
+
               <p className="hkt-env-sources">
-                Regional temperature/humidity: HKO <code>rhrread</code>. Wind &amp; visibility:{" "}
-                <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">
-                  Open-Meteo
-                </a>{" "}
-                (grid over Cyberport). Refreshed every 10 min.
+                HKO: {" "}
+                <a href="https://data.gov.hk/" target="_blank" rel="noopener noreferrer">
+                  data.gov.hk
+                </a>
               </p>
               {envError && (
                 <p className="hkt-env-error" role="alert">

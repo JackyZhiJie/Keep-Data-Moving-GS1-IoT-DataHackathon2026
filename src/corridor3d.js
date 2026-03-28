@@ -1,32 +1,16 @@
 /**
- * 3D corridor volumes: buffered route polygons + animated AGL height (urban clearance heuristic).
+ * 3D corridor volumes: buffered route polygons + extrusion height = route cruise altitude (altM).
  */
 
 import { buffer } from "@turf/buffer";
 import { centroid } from "@turf/centroid";
 import { lineString } from "@turf/helpers";
 
-/** Extra simulated clearance (m) where building extrusions are densest on the map. */
-export function buildingClearanceBonusM(lng, lat) {
-  if (lng > 114.148 && lng < 114.195 && lat > 22.27 && lat < 22.298) {
-    return 34;
-  }
-  if (lng > 114.155 && lng < 114.218 && lat > 22.282 && lat < 22.34) {
-    return 28;
-  }
-  return 12;
-}
-
 /**
- * Simulated corridor ceiling at a point: fleet cruise altitude + zone clearance + slow wave
- * (moves up/down over time and with denser “building” areas).
+ * Corridor extrusion height (m AGL): matches each drone/drop route cruise alt (detail popup Alt line).
  */
-export function corridorHeightAtPosition(route, nowMs, lng, lat) {
-  const base = route.altM ?? 100;
-  const bonus = buildingClearanceBonusM(lng, lat);
-  const phase = (route.id || "").split("").reduce((s, c) => s + c.charCodeAt(0), 0);
-  const wave = 16 * Math.sin(nowMs / 5800 + phase * 0.015);
-  const h = base * 0.7 + bonus + wave;
+export function corridorHeightAtPosition(route, _nowMs, _lng, _lat) {
+  const h = route.altM ?? 100;
   return Math.max(38, Math.round(h * 10) / 10);
 }
 

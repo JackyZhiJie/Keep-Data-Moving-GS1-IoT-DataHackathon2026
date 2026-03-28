@@ -154,9 +154,7 @@ export async function fetchCyberportEnvironment() {
       }
       const { kmText, quality } = visibilityKmAndQuality(cur.visibility);
       if (kmText !== "—") {
-        out.visibilityText = quality
-          ? `${kmText} km (${quality})`
-          : `${kmText} km`;
+        out.visibilityText = quality ? `${kmText} km · ${quality}` : `${kmText} km`;
       }
     }
     if (!out.windText && !out.visibilityText) {
