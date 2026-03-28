@@ -1,3 +1,4 @@
+import { fleetHexColor } from "./fleetVisual.js";
 import { generatePlannedDroneRoutes } from "./routePlanner.js";
 
 function featureToRoute(feature) {
@@ -18,6 +19,10 @@ function featureToRoute(feature) {
   const status = ["normal", "warning", "alert"].includes(p.status)
     ? p.status
     : "normal";
+  const color =
+    typeof p.color === "string" && /^#[0-9a-fA-F]{6}$/.test(p.color)
+      ? p.color
+      : undefined;
 
   const first = coords[0];
   const last = coords[coords.length - 1];
@@ -39,6 +44,7 @@ function featureToRoute(feature) {
   return {
     id,
     status,
+    ...(color ? { color } : {}),
     periodMs: Math.max(5000, Number(p.periodMs) || 90000),
     phase: Number.isFinite(Number(p.phase)) ? Number(p.phase) : 0,
     altM: Number.isFinite(Number(p.altM)) ? Number(p.altM) : 120,
@@ -72,11 +78,16 @@ export function parseRoutesFromPayload(data) {
     features = data.features;
   } else if (Array.isArray(data?.routes)) {
     return data.routes
-      .map((r) => {
+      .map((r, i) => {
         if (!r?.path?.length) return null;
+        const col =
+          typeof r.color === "string" && /^#[0-9a-fA-F]{6}$/.test(r.color)
+            ? r.color
+            : fleetHexColor(i);
         return {
           id: String(r.id || "D-00"),
           status: r.status || "normal",
+          color: col,
           periodMs: Math.max(5000, Number(r.periodMs) || 90000),
           phase: Number(r.phase) || 0,
           altM: Number(r.altM) || 120,
@@ -94,7 +105,14 @@ export function parseRoutesFromPayload(data) {
       .filter(Boolean);
   }
 
-  const routes = features.map(featureToRoute).filter(Boolean);
+  const routes = features
+    .map((feature, i) => {
+      const r = featureToRoute(feature);
+      if (!r) return null;
+      if (r.color) return r;
+      return { ...r, color: fleetHexColor(i) };
+    })
+    .filter(Boolean);
   return routes.length > 0 ? routes : null;
 }
 

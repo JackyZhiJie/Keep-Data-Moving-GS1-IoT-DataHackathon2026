@@ -12,6 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@turf/turf": "^7.3.4",
     "maplibre-gl": "^5.21.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

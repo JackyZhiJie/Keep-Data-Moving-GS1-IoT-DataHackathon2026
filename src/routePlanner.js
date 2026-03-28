@@ -2,7 +2,13 @@
  * Auto-plot low-altitude routes from random from/to, staying out of NFZ (with detours).
  */
 
+import { fleetHexColor } from "./fleetVisual.js";
 import { findBestGridPath } from "./pathfindingGrid.js";
+import {
+  droneLandBoxesForBBox,
+  pointInLandBoxes,
+  randomLandPointOutsideNfz,
+} from "./landSampling.js";
 import { pointInAnyNfz } from "./nfzGeometry.js";
 
 /** Operational box: Victoria Harbour / Central–Wan Chai (slightly wider for longer legs). */
@@ -172,28 +178,33 @@ export function planRouteFromTo(from, to, nfzContext, rand, bbox = DEFAULT_FLIGH
   return null;
 }
 
+/** Same alt / speed / status for every fleet dot (map + detail parity with delivery drops). */
 const DRONE_META = [
-  { id: "D-01", status: "normal", periodMs: 82000, phase: 0, altM: 118, speedMps: 14 },
-  { id: "D-02", status: "warning", periodMs: 96000, phase: 0.17, altM: 95, speedMps: 11 },
-  { id: "D-03", status: "alert", periodMs: 70000, phase: 0.41, altM: 132, speedMps: 16 },
-  { id: "D-04", status: "normal", periodMs: 88000, phase: 0.08, altM: 105, speedMps: 13 },
+  { id: "D-01", status: "normal", periodMs: 82000, phase: 0, altM: 112, speedMps: 13 },
+  { id: "D-02", status: "normal", periodMs: 96000, phase: 0.17, altM: 112, speedMps: 13 },
+  { id: "D-03", status: "normal", periodMs: 70000, phase: 0.41, altM: 112, speedMps: 13 },
+  { id: "D-04", status: "normal", periodMs: 88000, phase: 0.08, altM: 112, speedMps: 13 },
 ];
 
 /**
  * Planned open routes — only returns paths that pass polylineClear when NFZ exists.
  */
 export function generatePlannedDroneRoutes(nfzContext, bbox = DEFAULT_FLIGHT_BBOX, rand = Math.random) {
-  return DRONE_META.map((d) => {
+  const landBoxes = droneLandBoxesForBBox(bbox);
+
+  return DRONE_META.map((d, idx) => {
+    const color = fleetHexColor(idx);
+
     if (!nfzContext?.polygons?.length) {
       for (let i = 0; i < 72; i++) {
-        const from = randomPointOutsideNfz(bbox, nfzContext, rand);
-        const to = randomPointOutsideNfz(bbox, nfzContext, rand);
+        const from = randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
+        const to = randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
         if (distApproxM(from, to) < 380) continue;
-        return { ...d, closed: false, from, to, path: [from, to] };
+        return { ...d, color, closed: false, from, to, path: [from, to] };
       }
-      const from = randomPointOutsideNfz(bbox, nfzContext, rand);
-      const to = randomPointOutsideNfz(bbox, nfzContext, rand);
-      return { ...d, closed: false, from, to, path: [from, to] };
+      const from = randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
+      const to = randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
+      return { ...d, color, closed: false, from, to, path: [from, to] };
     }
 
     let from;
@@ -201,21 +212,21 @@ export function generatePlannedDroneRoutes(nfzContext, bbox = DEFAULT_FLIGHT_BBO
     let path = null;
 
     for (let outer = 0; outer < 320; outer++) {
-      from = randomPointOutsideNfz(bbox, nfzContext, rand);
-      to = randomPointOutsideNfz(bbox, nfzContext, rand);
+      from = randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
+      to = randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
       if (distApproxM(from, to) < 420) continue;
       path = planRouteFromTo(from, to, nfzContext, rand, bbox);
       if (path && polylineClear(path, nfzContext)) {
-        return { ...d, closed: false, from, to, path };
+        return { ...d, color, closed: false, from, to, path };
       }
     }
 
     for (let outer = 0; outer < 120; outer++) {
-      from = randomPointOutsideNfz(bbox, nfzContext, rand);
-      to = randomPointOutsideNfz(bbox, nfzContext, rand);
+      from = randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
+      to = randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
       path = planRouteFromTo(from, to, nfzContext, rand, bbox);
       if (path && polylineClear(path, nfzContext)) {
-        return { ...d, closed: false, from, to, path };
+        return { ...d, color, closed: false, from, to, path };
       }
     }
 
@@ -226,22 +237,47 @@ export function generatePlannedDroneRoutes(nfzContext, bbox = DEFAULT_FLIGHT_BBO
         if (i === j) continue;
         const a = cands[i];
         const b = cands[j];
-        if (!segmentViolatesNfz(a, b, nfzContext)) {
-          return { ...d, closed: false, from: a, to: b, path: [a, b] };
+        if (
+          pointInLandBoxes(a[0], a[1], landBoxes) &&
+          pointInLandBoxes(b[0], b[1], landBoxes) &&
+          !segmentViolatesNfz(a, b, nfzContext)
+        ) {
+          return { ...d, color, closed: false, from: a, to: b, path: [a, b] };
         }
         const p = planRouteFromTo(a, b, nfzContext, rand, bbox);
-        if (p && polylineClear(p, nfzContext)) {
-          return { ...d, closed: false, from: a, to: b, path: p };
+        if (
+          p &&
+          polylineClear(p, nfzContext) &&
+          pointInLandBoxes(a[0], a[1], landBoxes) &&
+          pointInLandBoxes(b[0], b[1], landBoxes)
+        ) {
+          return { ...d, color, closed: false, from: a, to: b, path: p };
         }
       }
     }
 
-    const p0 = cands[0] ?? randomPointOutsideNfz(bbox, nfzContext, rand);
-    const p1 = [p0[0] + 0.0002, p0[1] + 0.0002];
-    if (!pointInAnyNfz(p1[0], p1[1], nfzContext)) {
-      return { ...d, closed: false, from: p0, to: p1, path: [p0, p1] };
+    const p0 =
+      cands.find((c) => pointInLandBoxes(c[0], c[1], landBoxes)) ??
+      randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
+    for (let k = 0; k < 48; k++) {
+      const dx = (rand() - 0.5) * 0.0022;
+      const dy = (rand() - 0.5) * 0.0022;
+      const p1 = [p0[0] + dx, p0[1] + dy];
+      if (!pointInLandBoxes(p1[0], p1[1], landBoxes)) continue;
+      if (nfzContext?.polygons?.length && pointInAnyNfz(p1[0], p1[1], nfzContext)) {
+        continue;
+      }
+      if (distApproxM(p0, p1) < 80) continue;
+      return { ...d, color, closed: false, from: p0, to: p1, path: [p0, p1] };
     }
 
-    return { ...d, closed: false, from: p0, to: p0, path: [p0, [p0[0] + 1e-6, p0[1] + 1e-6]] };
+    return {
+      ...d,
+      color,
+      closed: false,
+      from: p0,
+      to: p0,
+      path: [p0, [p0[0] + 1e-6, p0[1] + 1e-6]],
+    };
   });
 }

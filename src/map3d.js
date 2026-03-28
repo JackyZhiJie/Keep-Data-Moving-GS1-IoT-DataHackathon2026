@@ -1,9 +1,29 @@
 /**
- * 3D view: extruded buildings only (no raster terrain — avoids GPU/network load and map.loaded() churn).
+ * 3D view: extruded buildings + volumetric route corridors (see corridor3d.js).
  */
 
 const CARTO_SOURCE_ID = "carto";
 const BUILDINGS_3D_LAYER_ID = "hkt-buildings-3d";
+
+export const DRONE_CORRIDOR_3D_LAYER = "hkt-drone-corridors-3d";
+export const DROP_CORRIDOR_3D_LAYER = "hkt-drop-corridors-3d";
+const DRONE_LINE_LAYER = "drone-paths-line";
+const DROP_LINE_LAYER = "delivery-drop-paths-line";
+
+function setPath3DMode(map, on) {
+  const lineVis = on ? "none" : "visible";
+  const corVis = on ? "visible" : "none";
+  for (const id of [DRONE_LINE_LAYER, DROP_LINE_LAYER]) {
+    if (map.getLayer(id)) {
+      map.setLayoutProperty(id, "visibility", lineVis);
+    }
+  }
+  for (const id of [DRONE_CORRIDOR_3D_LAYER, DROP_CORRIDOR_3D_LAYER]) {
+    if (map.getLayer(id)) {
+      map.setLayoutProperty(id, "visibility", corVis);
+    }
+  }
+}
 
 function findInsertBeforeId(map) {
   const preferred = [
@@ -82,6 +102,8 @@ export function enableMap3D(map) {
   } else {
     map.setLayoutProperty(BUILDINGS_3D_LAYER_ID, "visibility", "visible");
   }
+
+  setPath3DMode(map, true);
 }
 
 /**
@@ -105,4 +127,6 @@ export function disableMap3D(map) {
   }
 
   showFlatBuildings(map, true);
+
+  setPath3DMode(map, false);
 }

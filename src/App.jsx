@@ -15,6 +15,7 @@ import {
   generateDeliveryDropRoutes,
   getDeliveryDropLiveState,
 } from "./deliveryDrops.js";
+import { buildCorridorExtrusionCollection } from "./corridor3d.js";
 import { disableMap3D, enableMap3D } from "./map3d.js";
 import { generatePlannedDroneRoutes } from "./routePlanner.js";
 import "./App.css";
@@ -31,35 +32,9 @@ function mapPopupLegsHtml(from, to) {
   return "";
 }
 
-function formatDropPopupHtml(st) {
-  const legs = mapPopupLegsHtml(st.from, st.to);
-
-  const clock = st.updatedAt.toLocaleTimeString("en-GB", {
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const ms = String(st.updatedAt.getMilliseconds()).padStart(3, "0");
-  const dirLabel =
-    st.dir === "outbound" ? "→ Toward end" : "← Toward start";
-
-  const top = `<div class="hkt-map-popup-top">
-    <strong>Drop ID: ${st.id}</strong>
-    <div class="hkt-map-popup-meta">Alt: ${st.altM ?? "—"}m AGL · Speed: ${st.speedMps ?? "—"}m/s</div>
-    ${legs}
-  </div>`;
-
-  return `${top}<div class="hkt-map-popup-live hkt-drop-popup">
-    <div class="hkt-drop-popup-time">${clock}.${ms}</div>
-    <div class="hkt-drop-popup-row"><span>Position</span><span>${st.lng.toFixed(5)}, ${st.lat.toFixed(5)}</span></div>
-    <div class="hkt-drop-popup-row"><span>Leg progress</span><span>${st.alongPct}%</span></div>
-    <div class="hkt-drop-popup-row"><span>Motion</span><span>${dirLabel}</span></div>
-    <div class="hkt-drop-popup-foot">Cycle ${(st.periodMs / 1000).toFixed(1)}s · delivery · live</div>
-  </div>`;
-}
-
-function formatDronePopupHtml(st) {
+/** Same detail layout for drone and delivery dots (only live fields differ). */
+function formatFleetDotPopupHtml(st) {
+  const kind = st.dotKind === "drop" ? "Drop" : "Drone";
   const legs = st.isOpenLeg
     ? mapPopupLegsHtml(st.from, st.to)
     : `<div class="hkt-map-popup-legs"><small>Closed patrol route</small></div>`;
@@ -73,18 +48,28 @@ function formatDronePopupHtml(st) {
   const ms = String(st.updatedAt.getMilliseconds()).padStart(3, "0");
   const progLabel = st.isOpenLeg ? "Leg progress" : "Route position";
 
+  const spd = typeof st.speedMps === "number" ? st.speedMps.toFixed(1) : "—";
+  const kmh = typeof st.speedKmh === "number" ? st.speedKmh.toFixed(1) : "—";
+  const plan =
+    typeof st.nominalSpeedMps === "number" ? st.nominalSpeedMps.toFixed(1) : "—";
+  const batt =
+    typeof st.batteryPct === "number" ? `${st.batteryPct}%` : "—";
+
   const top = `<div class="hkt-map-popup-top">
-    <strong>Drone ID: ${st.id}</strong>
-    <div class="hkt-map-popup-meta">Alt: ${st.altM ?? "—"}m AGL · Speed: ${st.speedMps ?? "—"}m/s</div>
+    <strong>${kind} ID: ${st.id}</strong>
+    <div class="hkt-map-popup-meta">Alt: ${st.altM ?? "—"}m AGL · Battery: ${batt}</div>
     ${legs}
   </div>`;
 
   return `${top}<div class="hkt-map-popup-live hkt-drop-popup">
     <div class="hkt-drop-popup-time">${clock}.${ms}</div>
     <div class="hkt-drop-popup-row"><span>Position</span><span>${st.lng.toFixed(5)}, ${st.lat.toFixed(5)}</span></div>
+    <div class="hkt-drop-popup-row"><span>Ground speed</span><span>${spd} m/s (${kmh} km/h) <small>· plan ${plan} m/s</small></span></div>
+    <div class="hkt-drop-popup-row"><span>Battery</span><span>${batt}</span></div>
     <div class="hkt-drop-popup-row"><span>${progLabel}</span><span>${st.alongPct}%</span></div>
     <div class="hkt-drop-popup-row"><span>Motion</span><span>${st.motionLabel}</span></div>
-    <div class="hkt-drop-popup-foot">Cycle ${(st.periodMs / 1000).toFixed(1)}s · fleet · live</div>
+    <div class="hkt-drop-popup-row"><span>3D corridor</span><span>${st.corridorAltM ?? "—"}m AGL <small>(zone + wave)</small></span></div>
+    <div class="hkt-drop-popup-foot">Cycle ${(st.periodMs / 1000).toFixed(1)}s · live</div>
   </div>`;
 }
 
@@ -106,6 +91,7 @@ function App() {
   const dropSelectionRef = useRef(null);
   const droneSelectionRef = useRef(null);
   const mapFleetLayersReadyRef = useRef(false);
+  const is3DRef = useRef(false);
   const [leftTab, setLeftTab] = useState("overview");
   const [dateTime, setDateTime] = useState("");
   const [is3D, setIs3D] = useState(false);
@@ -176,6 +162,22 @@ function App() {
       const pathSrc = mapRef.current?.getSource?.("drone-paths");
       if (pathSrc) {
         pathSrc.setData(routesToPathLineCollection(droneRoutesRef.current));
+      }
+      const t = performance.now();
+      const dc = mapRef.current?.getSource?.("drone-corridors-3d");
+      if (dc) {
+        dc.setData(
+          buildCorridorExtrusionCollection(droneRoutesRef.current, t)
+        );
+      }
+      const dpc = mapRef.current?.getSource?.("drop-corridors-3d");
+      if (dpc) {
+        dpc.setData(
+          buildCorridorExtrusionCollection(
+            deliveryDropRoutesRef.current,
+            t
+          )
+        );
       }
     }
 
@@ -287,9 +289,25 @@ function App() {
         ),
       });
 
+      map.addSource("drop-corridors-3d", {
+        type: "geojson",
+        data: buildCorridorExtrusionCollection(
+          deliveryDropRoutesRef.current,
+          performance.now()
+        ),
+      });
+
       map.addSource("drone-paths", {
         type: "geojson",
         data: routesToPathLineCollection(droneRoutesRef.current),
+      });
+
+      map.addSource("drone-corridors-3d", {
+        type: "geojson",
+        data: buildCorridorExtrusionCollection(
+          droneRoutesRef.current,
+          performance.now()
+        ),
       });
 
       map.addSource("drones", {
@@ -307,12 +325,20 @@ function App() {
         source: "drones",
         paint: {
           "circle-radius": 8,
-          "circle-color": ["match", ["get", "status"], "normal", "#10b981", "warning", "#f59e0b", "alert", "#ef4444", "#ffffff"],
+          "circle-color": ["coalesce", ["get", "color"], "#94a3b8"],
           "circle-stroke-width": 2,
           "circle-stroke-color": "#fff",
           "circle-opacity": 0.9,
         },
       });
+
+      const corridorExtrusionPaint = {
+        "fill-extrusion-height": ["get", "h"],
+        "fill-extrusion-base": 0,
+        "fill-extrusion-color": ["coalesce", ["get", "color"], "#94a3b8"],
+        "fill-extrusion-opacity": 0.46,
+        "fill-extrusion-vertical-gradient": false,
+      };
 
       map.addLayer(
         {
@@ -324,7 +350,7 @@ function App() {
             "line-cap": "round",
           },
           paint: {
-            "line-color": ["match", ["get", "status"], "normal", "#10b981", "warning", "#f59e0b", "alert", "#ef4444", "#64748b"],
+            "line-color": ["coalesce", ["get", "color"], "#64748b"],
             "line-width": 2.5,
             "line-opacity": 0.7,
           },
@@ -334,12 +360,24 @@ function App() {
 
       map.addLayer(
         {
+          id: "hkt-drop-corridors-3d",
+          type: "fill-extrusion",
+          source: "drop-corridors-3d",
+          minzoom: 11,
+          layout: { visibility: "none" },
+          paint: corridorExtrusionPaint,
+        },
+        "delivery-drop-paths-line"
+      );
+
+      map.addLayer(
+        {
           id: "delivery-drops-layer",
           type: "circle",
           source: "delivery-drops",
           paint: {
             "circle-radius": 8,
-            "circle-color": ["match", ["get", "status"], "normal", "#10b981", "warning", "#f59e0b", "alert", "#ef4444", "#ffffff"],
+            "circle-color": ["coalesce", ["get", "color"], "#94a3b8"],
             "circle-stroke-width": 2,
             "circle-stroke-color": "#fff",
             "circle-opacity": 0.9,
@@ -358,12 +396,24 @@ function App() {
             "line-cap": "round",
           },
           paint: {
-            "line-color": ["match", ["get", "status"], "normal", "#10b981", "warning", "#f59e0b", "alert", "#ef4444", "#64748b"],
+            "line-color": ["coalesce", ["get", "color"], "#64748b"],
             "line-width": 2.5,
             "line-opacity": 0.7,
           },
         },
         "drones-layer"
+      );
+
+      map.addLayer(
+        {
+          id: "hkt-drone-corridors-3d",
+          type: "fill-extrusion",
+          source: "drone-corridors-3d",
+          minzoom: 11,
+          layout: { visibility: "none" },
+          paint: corridorExtrusionPaint,
+        },
+        "drone-paths-line"
       );
 
       const ANIM_MS = 50;
@@ -398,6 +448,26 @@ function App() {
               )
             );
           }
+          if (is3DRef.current) {
+            const dCor = map.getSource("drone-corridors-3d");
+            if (dCor) {
+              dCor.setData(
+                buildCorridorExtrusionCollection(
+                  droneRoutesRef.current,
+                  time
+                )
+              );
+            }
+            const pCor = map.getSource("drop-corridors-3d");
+            if (pCor) {
+              pCor.setData(
+                buildCorridorExtrusionCollection(
+                  deliveryDropRoutesRef.current,
+                  time
+                )
+              );
+            }
+          }
         }
 
         if (tick) {
@@ -412,7 +482,7 @@ function App() {
                 nfzContextRef.current
               );
               dropSel.popup.setLngLat([st.lng, st.lat]);
-              dropSel.popup.setHTML(formatDropPopupHtml(st));
+              dropSel.popup.setHTML(formatFleetDotPopupHtml(st));
             }
           }
           const droneSel = droneSelectionRef.current;
@@ -425,7 +495,7 @@ function App() {
             );
             if (st) {
               droneSel.popup.setLngLat([st.lng, st.lat]);
-              droneSel.popup.setHTML(formatDronePopupHtml(st));
+              droneSel.popup.setHTML(formatFleetDotPopupHtml(st));
             }
           }
         }
@@ -454,7 +524,7 @@ function App() {
           className: "hkt-map-popup-anchor",
         })
           .setLngLat(feat.geometry.coordinates.slice())
-          .setHTML(formatDronePopupHtml(st))
+          .setHTML(formatFleetDotPopupHtml(st))
           .addTo(map);
         popup.on("close", () => {
           if (droneSelectionRef.current?.popup === popup) {
@@ -488,7 +558,7 @@ function App() {
         })
           .setLngLat(feat.geometry.coordinates.slice())
           .setHTML(
-            formatDropPopupHtml(
+            formatFleetDotPopupHtml(
               getDeliveryDropLiveState(
                 performance.now(),
                 route,
@@ -543,6 +613,7 @@ function App() {
 
     setIs3D((prev) => {
       const next = !prev;
+      is3DRef.current = next;
       if (next) {
         enableMap3D(map);
         map.easeTo({
@@ -775,7 +846,7 @@ function App() {
         onClick={toggle3D}
         aria-pressed={is3D}
       >
-        {is3D ? "2D map" : "3D view (buildings)"}
+        {is3D ? "2D map" : "3D view (buildings + corridors)"}
       </button>
     </div>
   );

@@ -2,12 +2,78 @@
  * Drone motion: closed patrol loops or open from→to legs (ping-pong).
  */
 
+import { corridorHeightAtPosition } from "./corridor3d.js";
 import {
   pathMayIntersectNfz,
   positionOnOpenPathAvoidingNfz,
   positionOnPathAvoidingNfz,
 } from "./nfzGeometry.js";
 import { generatePlannedDroneRoutes } from "./routePlanner.js";
+
+/** Single battery % shown on every map dot detail (no time-varying simulation). */
+export const MAP_DETAIL_BATTERY_PCT = 87;
+
+/** Sample interval for ground speed from separated marker motion (m/s). */
+const SPEED_SAMPLE_MS = 110;
+
+function distApproxM(a, b) {
+  const latRef = (a[1] + b[1]) / 2;
+  const mPerLat = 111320;
+  const mPerLng = mPerLat * Math.cos((latRef * Math.PI) / 180);
+  return Math.hypot((b[0] - a[0]) * mPerLng, (b[1] - a[1]) * mPerLat);
+}
+
+function pathLengthM(coords) {
+  if (!coords || coords.length < 2) return 0;
+  let s = 0;
+  for (let i = 0; i < coords.length - 1; i++) {
+    s += distApproxM(coords[i], coords[i + 1]);
+  }
+  return s;
+}
+
+/**
+ * Average path speed implied by period (out+back for open ping-pong, one lap for closed).
+ */
+export function nominalPathSpeedMps(r) {
+  const L = pathLengthM(r.path);
+  if (L <= 0 || !r.periodMs) return r.speedMps ?? 0;
+  const T = r.periodMs / 1000;
+  if (r.closed === false) return (2 * L) / T;
+  return L / T;
+}
+
+/** Fixed UI battery; params kept for call-site compatibility. */
+export function batteryPctForRoute(_r, _nowMs) {
+  return MAP_DETAIL_BATTERY_PCT;
+}
+
+function separatedFleetAt(nowMs, list, nfzContext) {
+  const raw = rawDronePositions(nowMs, list, nfzContext);
+  const latRef =
+    raw.reduce((s, p) => s + p[1], 0) / Math.max(1, raw.length);
+  return separateLngLatPairs(raw, 26, latRef);
+}
+
+/** Ground speed per drone from last ~SPEED_SAMPLE_MS of separated motion (matches map markers). */
+export function fleetGroundSpeedsMps(nowMs, list, nfzContext) {
+  const n = list.length;
+  if (n === 0) return [];
+  const tPrev = Math.max(0, nowMs - SPEED_SAMPLE_MS);
+  const dtSec = (nowMs - tPrev) / 1000;
+  const cur = separatedFleetAt(nowMs, list, nfzContext);
+  const prev = separatedFleetAt(tPrev, list, nfzContext);
+  const speeds = [];
+  for (let i = 0; i < n; i++) {
+    const d = distApproxM(cur[i], prev[i]);
+    let v = dtSec > 1e-6 ? d / dtSec : 0;
+    if (v < 0.35 && nowMs < SPEED_SAMPLE_MS * 2) {
+      v = nominalPathSpeedMps(list[i]);
+    }
+    speeds.push(v);
+  }
+  return speeds;
+}
 
 function segmentLength(a, b) {
   const dx = a[0] - b[0];
@@ -147,6 +213,11 @@ export function getDroneLiveState(nowMs, droneId, routes, nfzContext) {
   const [lng, lat] = separated[idx];
   const r = list[idx];
   const t = nowMs / r.periodMs + r.phase;
+  const speeds = fleetGroundSpeedsMps(nowMs, list, nfzContext);
+  const speedGroundMps = speeds[idx] ?? 0;
+  const speedKmh = speedGroundMps * 3.6;
+  const batteryPct = batteryPctForRoute(r, nowMs);
+  const nominalSpeedMps = nominalPathSpeedMps(r);
 
   let alongPct;
   let motionLabel;
@@ -162,9 +233,14 @@ export function getDroneLiveState(nowMs, droneId, routes, nfzContext) {
   }
 
   return {
+    dotKind: "drone",
     id: r.id,
     altM: r.altM,
-    speedMps: r.speedMps,
+    speedMps: speedGroundMps,
+    speedKmh,
+    nominalSpeedMps,
+    specSpeedMps: r.speedMps,
+    batteryPct,
     status: r.status,
     from: r.from,
     to: r.to,
@@ -174,6 +250,7 @@ export function getDroneLiveState(nowMs, droneId, routes, nfzContext) {
     motionLabel,
     periodMs: r.periodMs,
     isOpenLeg: r.closed === false,
+    corridorAltM: corridorHeightAtPosition(r, nowMs, lng, lat),
     updatedAt: new Date(),
   };
 }
@@ -185,14 +262,20 @@ export function buildDroneGeoJSON(nowMs, routes = DRONE_ROUTES, nfzContext = nul
   const latRef =
     raw.reduce((s, p) => s + p[1], 0) / Math.max(1, raw.length);
   const separated = separateLngLatPairs(raw, 26, latRef);
+  const speeds = fleetGroundSpeedsMps(nowMs, list, nfzContext);
 
   const features = list.map((r, idx) => {
     const [lng, lat] = separated[idx];
     const props = {
       status: r.status,
       id: r.id,
+      color: r.color,
       alt_m: r.altM,
-      speed_mps: r.speedMps,
+      speed_mps: speeds[idx] ?? 0,
+      speed_kmh: (speeds[idx] ?? 0) * 3.6,
+      nominal_speed_mps: nominalPathSpeedMps(r),
+      spec_speed_mps: r.speedMps,
+      battery_pct: batteryPctForRoute(r, nowMs),
     };
 
     if (r.closed === false && r.from && r.to) {
@@ -224,7 +307,7 @@ export function routesToPathLineCollection(routes) {
           : [...r.path];
       return {
         type: "Feature",
-        properties: { id: r.id, status: r.status },
+        properties: { id: r.id, status: r.status, color: r.color },
         geometry: { type: "LineString", coordinates: coords },
       };
     }),

@@ -2,37 +2,63 @@
  * Delivery drop markers in Kowloon — motion matches drones: open path + ping-pong (see droneSim).
  */
 
+import { corridorHeightAtPosition } from "./corridor3d.js";
 import {
   pathMayIntersectNfz,
   pointInAnyNfz,
   positionOnOpenPathAvoidingNfz,
 } from "./nfzGeometry.js";
-import { pingPongOpenT, pointOnOpenPath } from "./droneSim.js";
+import {
+  MAP_DETAIL_BATTERY_PCT,
+  nominalPathSpeedMps,
+  pingPongOpenT,
+  pointOnOpenPath,
+} from "./droneSim.js";
+import { fleetHexColor } from "./fleetVisual.js";
+import {
+  deliveryLandBoxesForBBox,
+  pointInLandBoxes,
+  randomLandPointOutsideNfz,
+} from "./landSampling.js";
 import {
   planRouteFromTo,
   polylineClear,
-  randomPointOutsideNfz,
   segmentViolatesNfz,
 } from "./routePlanner.js";
 
 /** Urban Kowloon + margin — wider box so longer corridors fit before edge clamp. */
 export const KOWLOON_DELIVERY_BBOX = [114.150, 22.280, 114.220, 22.345];
 
-/** Same status / alt / speed cadence as D-01 … D-04 (routePlanner DRONE_META). */
-const DROP_FLEET_STYLE = [
-  { status: "normal", altM: 118, speedMps: 14 },
-  { status: "warning", altM: 95, speedMps: 11 },
-  { status: "alert", altM: 132, speedMps: 16 },
-  { status: "normal", altM: 105, speedMps: 13 },
-];
+/** One style for every delivery dot (lines, circles, 3D corridors, popups). */
+const DROP_VISUAL = { status: "normal", altM: 112, speedMps: 13 };
 
-/** Same timing pattern as the four fleet drones (routePlanner DRONE_META). */
-const DROP_MOTION = [
-  { periodMs: 82000, phase: 0 },
-  { periodMs: 96000, phase: 0.17 },
-  { periodMs: 70000, phase: 0.41 },
-  { periodMs: 88000, phase: 0.08 },
-];
+const DROP_SPEED_DT_MS = 110;
+
+function dropLngLatAt(nowMs, route, nfzContext) {
+  const t = nowMs / route.periodMs + route.phase;
+  const along = pingPongOpenT(t);
+  if (nfzContext && pathMayIntersectNfz(route.path, nfzContext)) {
+    return positionOnOpenPathAvoidingNfz(route.path, along, nfzContext);
+  }
+  return pointOnOpenPath(route.path, along);
+}
+
+function dropGroundSpeedMps(nowMs, route, nfzContext) {
+  const p1 = dropLngLatAt(nowMs, route, nfzContext);
+  const t0 = Math.max(0, nowMs - DROP_SPEED_DT_MS);
+  const p0 = dropLngLatAt(t0, route, nfzContext);
+  const latRef = (p0[1] + p1[1]) / 2;
+  const d = distM(p0, p1, latRef);
+  const dtSec = (nowMs - t0) / 1000;
+  let v = dtSec > 1e-6 ? d / dtSec : 0;
+  if (v < 0.35 && nowMs < DROP_SPEED_DT_MS * 2) {
+    v = nominalPathSpeedMps(route);
+  }
+  return v;
+}
+
+/** Shared leg cycle; phase spread by index so markers are not in sync. */
+const DROP_PERIOD_MS = 82000;
 
 function distM(a, b, latRef) {
   const mPerLat = 111320;
@@ -202,12 +228,21 @@ function finalizeCorridorPath(path, from, to, bbox, nfzContext, rand) {
  * @param {() => number} [rand]
  * @param {number} [count]
  */
+function dropEndpointOk(cand, landBoxes, nfzContext) {
+  if (!pointInLandBoxes(cand[0], cand[1], landBoxes)) return false;
+  if (nfzContext?.polygons?.length && pointInAnyNfz(cand[0], cand[1], nfzContext)) {
+    return false;
+  }
+  return true;
+}
+
 export function generateDeliveryDropRoutes(
   nfzContext,
   bbox = KOWLOON_DELIVERY_BBOX,
   rand = Math.random,
   count = 20
 ) {
+  const landBoxes = deliveryLandBoxesForBBox(bbox);
   const routes = [];
   const minApartM = 130;
   const maxTries = 6000;
@@ -215,7 +250,7 @@ export function generateDeliveryDropRoutes(
 
   while (routes.length < count && tries < maxTries) {
     tries++;
-    const from = randomPointOutsideNfz(bbox, nfzContext, rand);
+    const from = randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
     const okApart = routes.every(
       (r) => distM(from, r.from, from[1]) >= minApartM
     );
@@ -224,7 +259,7 @@ export function generateDeliveryDropRoutes(
     let to = null;
     let path = null;
     for (let k = 0; k < 32; k++) {
-      const cand = randomPointOutsideNfz(bbox, nfzContext, rand);
+      const cand = randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
       if (distM(from, cand, from[1]) < 340) continue;
       const p = planRouteFromTo(from, cand, nfzContext, rand, bbox);
       if (p && polylineClear(p, nfzContext)) {
@@ -239,9 +274,7 @@ export function generateDeliveryDropRoutes(
         const dist = 220 + rand() * 520;
         const br = rand() * Math.PI * 2;
         const cand = clampToBBox(offsetFrom(from, dist, br, from[1]), bbox);
-        if (nfzContext?.polygons?.length && pointInAnyNfz(cand[0], cand[1], nfzContext)) {
-          continue;
-        }
+        if (!dropEndpointOk(cand, landBoxes, nfzContext)) continue;
         const p = planRouteFromTo(from, cand, nfzContext, rand, bbox);
         if (p && polylineClear(p, nfzContext)) {
           to = cand;
@@ -256,9 +289,7 @@ export function generateDeliveryDropRoutes(
         const dist = 120 + rand() * 220;
         const br = rand() * Math.PI * 2;
         const cand = clampToBBox(offsetFrom(from, dist, br, from[1]), bbox);
-        if (nfzContext?.polygons?.length && pointInAnyNfz(cand[0], cand[1], nfzContext)) {
-          continue;
-        }
+        if (!dropEndpointOk(cand, landBoxes, nfzContext)) continue;
         const p = planRouteFromTo(from, cand, nfzContext, rand, bbox);
         if (p && polylineClear(p, nfzContext)) {
           to = cand;
@@ -274,31 +305,30 @@ export function generateDeliveryDropRoutes(
     if (!path || !polylineClear(path, nfzContext)) continue;
 
     const n = routes.length;
-    const m = DROP_MOTION[n % DROP_MOTION.length];
-    const sty = DROP_FLEET_STYLE[n % DROP_FLEET_STYLE.length];
     routes.push({
       id: `DROP-${String(n + 1).padStart(2, "0")}`,
       label: `Drop ${n + 1}`,
-      status: sty.status,
-      altM: sty.altM,
-      speedMps: sty.speedMps,
+      color: fleetHexColor(4 + n),
+      status: DROP_VISUAL.status,
+      altM: DROP_VISUAL.altM,
+      speedMps: DROP_VISUAL.speedMps,
       closed: false,
       from: [...from],
       to: [...to],
       path: path.map((c) => [...c]),
-      periodMs: m.periodMs + Math.floor(rand() * 6000 - 3000),
-      phase: m.phase + rand() * 0.06,
+      periodMs: DROP_PERIOD_MS,
+      phase: (n * 0.6180339887498949) % 1,
     });
   }
 
   tries = 0;
   while (routes.length < count && tries < maxTries) {
     tries++;
-    const from = randomPointOutsideNfz(bbox, nfzContext, rand);
+    const from = randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
     let to = null;
     let path = null;
     for (let k = 0; k < 26; k++) {
-      const cand = randomPointOutsideNfz(bbox, nfzContext, rand);
+      const cand = randomLandPointOutsideNfz(landBoxes, nfzContext, rand);
       if (distM(from, cand, from[1]) < 240) continue;
       const p = planRouteFromTo(from, cand, nfzContext, rand, bbox);
       if (p && polylineClear(p, nfzContext)) {
@@ -312,9 +342,7 @@ export function generateDeliveryDropRoutes(
         const dist = 140 + rand() * 340;
         const br = rand() * Math.PI * 2;
         const cand = clampToBBox(offsetFrom(from, dist, br, from[1]), bbox);
-        if (nfzContext?.polygons?.length && pointInAnyNfz(cand[0], cand[1], nfzContext)) {
-          continue;
-        }
+        if (!dropEndpointOk(cand, landBoxes, nfzContext)) continue;
         const p = planRouteFromTo(from, cand, nfzContext, rand, bbox);
         if (p && polylineClear(p, nfzContext)) {
           to = cand;
@@ -329,20 +357,19 @@ export function generateDeliveryDropRoutes(
     if (!path || !polylineClear(path, nfzContext)) continue;
 
     const n = routes.length;
-    const m = DROP_MOTION[n % DROP_MOTION.length];
-    const sty = DROP_FLEET_STYLE[n % DROP_FLEET_STYLE.length];
     routes.push({
       id: `DROP-${String(n + 1).padStart(2, "0")}`,
       label: `Drop ${n + 1}`,
-      status: sty.status,
-      altM: sty.altM,
-      speedMps: sty.speedMps,
+      color: fleetHexColor(4 + n),
+      status: DROP_VISUAL.status,
+      altM: DROP_VISUAL.altM,
+      speedMps: DROP_VISUAL.speedMps,
       closed: false,
       from: [...from],
       to: [...to],
       path: path.map((c) => [...c]),
-      periodMs: m.periodMs + Math.floor(rand() * 6000 - 3000),
-      phase: m.phase + rand() * 0.06,
+      periodMs: DROP_PERIOD_MS,
+      phase: (n * 0.6180339887498949) % 1,
     });
   }
 
@@ -355,7 +382,7 @@ export function deliveryDropRoutesToLineCollection(routes) {
     type: "FeatureCollection",
     features: list.map((r) => ({
       type: "Feature",
-      properties: { id: r.id, status: r.status },
+      properties: { id: r.id, status: r.status, color: r.color },
       geometry: { type: "LineString", coordinates: [...r.path] },
     })),
   };
@@ -367,29 +394,32 @@ export function deliveryDropRoutesToLineCollection(routes) {
 export function getDeliveryDropLiveState(nowMs, route, nfzContext) {
   const t = nowMs / route.periodMs + route.phase;
   const along = pingPongOpenT(t);
-  let lng;
-  let lat;
-  if (nfzContext && pathMayIntersectNfz(route.path, nfzContext)) {
-    [lng, lat] = positionOnOpenPathAvoidingNfz(route.path, along, nfzContext);
-  } else {
-    [lng, lat] = pointOnOpenPath(route.path, along);
-  }
+  const [lng, lat] = dropLngLatAt(nowMs, route, nfzContext);
   const cycleT = (((nowMs / route.periodMs + route.phase) % 1) + 1) % 1;
-  const dir = cycleT < 0.5 ? "outbound" : "return";
+  const motionLabel =
+    cycleT < 0.5 ? "→ Toward end" : "← Toward start";
+  const speedGroundMps = dropGroundSpeedMps(nowMs, route, nfzContext);
+  const nominalSpeedMps = nominalPathSpeedMps(route);
   return {
+    dotKind: "drop",
     lng,
     lat,
     along,
     alongPct: Math.round(along * 100),
-    dir,
+    motionLabel,
     periodMs: route.periodMs,
     label: route.label,
     id: route.id,
     status: route.status,
     altM: route.altM,
-    speedMps: route.speedMps,
+    speedMps: speedGroundMps,
+    speedKmh: speedGroundMps * 3.6,
+    nominalSpeedMps,
+    batteryPct: MAP_DETAIL_BATTERY_PCT,
+    isOpenLeg: true,
     from: route.from,
     to: route.to,
+    corridorAltM: corridorHeightAtPosition(route, nowMs, lng, lat),
     updatedAt: new Date(),
   };
 }
@@ -409,14 +439,20 @@ export function buildDeliveryDropsGeoJSON(nowMs, routes, nfzContext) {
     } else {
       [lng, lat] = pointOnOpenPath(r.path, along);
     }
+    const v = dropGroundSpeedMps(nowMs, r, nfzContext);
     return {
       type: "Feature",
       properties: {
         id: r.id,
         label: r.label,
         status: r.status,
+        color: r.color,
         alt_m: r.altM,
-        speed_mps: r.speedMps,
+        speed_mps: v,
+        speed_kmh: v * 3.6,
+        nominal_speed_mps: nominalPathSpeedMps(r),
+        spec_speed_mps: r.speedMps,
+        battery_pct: MAP_DETAIL_BATTERY_PCT,
         from_lng: r.from[0],
         from_lat: r.from[1],
         to_lng: r.to[0],
