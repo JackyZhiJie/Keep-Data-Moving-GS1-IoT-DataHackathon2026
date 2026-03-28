@@ -255,6 +255,69 @@ export function getDroneLiveState(nowMs, droneId, routes, nfzContext) {
   };
 }
 
+const FPV_LOOKAHEAD_MS = 100;
+const FPV_LOOKAHEAD_M = 400;
+const FPV_LOOK_AT_ALT_M = 32;
+
+function offsetMetersBearing(lng, lat, bearingDeg, distM) {
+  const br = (bearingDeg * Math.PI) / 180;
+  const mPerLat = 111320;
+  const mPerLng = mPerLat * Math.cos((lat * Math.PI) / 180);
+  const east = Math.sin(br) * distM;
+  const north = Math.cos(br) * distM;
+  return [lng + east / mPerLng, lat + north / mPerLat];
+}
+
+/**
+ * Camera at drone (corridor height) looking ~400m along ground track (MapLibre calculateCameraOptionsFromTo).
+ */
+export function getDroneCameraLookPair(nowMs, droneId, routes, nfzContext) {
+  const st = getDroneLiveState(nowMs, droneId, routes, nfzContext);
+  if (!st) return null;
+
+  const list = Array.isArray(routes) && routes.length > 0 ? routes : DRONE_ROUTES;
+  const idx = list.findIndex((r) => r.id === droneId);
+  if (idx < 0) return null;
+
+  const separatedAt = (t) => {
+    const raw = rawDronePositions(t, list, nfzContext);
+    const latRef =
+      raw.reduce((s, p) => s + p[1], 0) / Math.max(1, raw.length);
+    return separateLngLatPairs(raw, 26, latRef);
+  };
+
+  const p0 = separatedAt(nowMs)[idx];
+  const p1 = separatedAt(nowMs + FPV_LOOKAHEAD_MS)[idx];
+  const latRef = (p0[1] + p1[1]) / 2;
+  const mPerLat = 111320;
+  const mPerLng = mPerLat * Math.cos((latRef * Math.PI) / 180);
+  const dx = (p1[0] - p0[0]) * mPerLng;
+  const dy = (p1[1] - p0[1]) * mPerLat;
+  const dist = Math.hypot(dx, dy);
+  let bearingDeg = 0;
+  if (dist >= 0.12) {
+    bearingDeg = (Math.atan2(dx, dy) * 180) / Math.PI;
+  }
+
+  const [lookLng, lookLat] = offsetMetersBearing(
+    st.lng,
+    st.lat,
+    bearingDeg,
+    FPV_LOOKAHEAD_M
+  );
+
+  const camAltM = Math.max(48, st.corridorAltM ?? st.altM ?? 110);
+
+  return {
+    camLng: st.lng,
+    camLat: st.lat,
+    camAltM,
+    lookLng,
+    lookLat,
+    lookAtAltM: FPV_LOOK_AT_ALT_M,
+  };
+}
+
 export function buildDroneGeoJSON(nowMs, routes = DRONE_ROUTES, nfzContext = null) {
   const list = Array.isArray(routes) && routes.length > 0 ? routes : DRONE_ROUTES;
   const raw = rawDronePositions(nowMs, list, nfzContext);

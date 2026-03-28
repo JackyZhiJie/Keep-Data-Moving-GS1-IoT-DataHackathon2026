@@ -20,6 +20,66 @@
   z-index: 1;
 }
 
+.hkt-fpv-hud {
+  position: absolute;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  pointer-events: auto;
+}
+
+.hkt-fpv-hud__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+}
+
+.hkt-fpv-hud__id {
+  font-weight: 700;
+  font-family: monospace;
+  color: #38bdf8;
+}
+
+.hkt-fpv-hud__exit {
+  cursor: pointer;
+  border: 1px solid #475569;
+  background: rgba(56, 189, 248, 0.15);
+  color: #e2e8f0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.hkt-fpv-hud__exit:hover {
+  background: rgba(56, 189, 248, 0.28);
+}
+
+.hkt-fpv-hud__hint {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.hkt-fpv-popup-hint {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(56, 189, 248, 0.12);
+  border-radius: 4px;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+.hkt-fpv-popup-hint kbd {
+  font-size: 0.85em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
 .panel {
   position: absolute;
   z-index: 2;

@@ -240,7 +240,7 @@ export function generateDeliveryDropRoutes(
   nfzContext,
   bbox = KOWLOON_DELIVERY_BBOX,
   rand = Math.random,
-  count = 20
+  count = 10
 ) {
   const landBoxes = deliveryLandBoxesForBBox(bbox);
   const routes = [];

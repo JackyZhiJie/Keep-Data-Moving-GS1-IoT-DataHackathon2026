@@ -5,6 +5,7 @@ import { fetchCyberportEnvironment } from "./environmentWeather.js";
 import {
   buildDroneGeoJSON,
   DRONE_ROUTES,
+  getDroneCameraLookPair,
   getDroneLiveState,
   routesToPathLineCollection,
 } from "./droneSim.js";
@@ -33,11 +34,16 @@ function mapPopupLegsHtml(from, to) {
 }
 
 /** Same detail layout for drone and delivery dots (only live fields differ). */
-function formatFleetDotPopupHtml(st) {
+function formatFleetDotPopupHtml(st, opts = {}) {
   const kind = st.dotKind === "drop" ? "Drop" : "Drone";
   const legs = st.isOpenLeg
     ? mapPopupLegsHtml(st.from, st.to)
     : `<div class="hkt-map-popup-legs"><small>Closed patrol route</small></div>`;
+
+  const fpvNote =
+    opts.showDroneFpvNote && st.dotKind === "drone"
+      ? `<div class="hkt-fpv-popup-hint"><small>Drone FPV: the 3D map camera follows this aircraft forward. Press <kbd>Esc</kbd> or <strong>Exit FPV</strong> in the top bar to release the view.</small></div>`
+      : "";
 
   const clock = st.updatedAt.toLocaleTimeString("en-GB", {
     hour12: false,
@@ -58,6 +64,7 @@ function formatFleetDotPopupHtml(st) {
   const top = `<div class="hkt-map-popup-top">
     <strong>${kind} ID: ${st.id}</strong>
     <div class="hkt-map-popup-meta">Alt: ${st.altM ?? "—"}m AGL · Battery: ${batt}</div>
+    ${fpvNote}
     ${legs}
   </div>`;
 
@@ -92,9 +99,12 @@ function App() {
   const droneSelectionRef = useRef(null);
   const mapFleetLayersReadyRef = useRef(false);
   const is3DRef = useRef(false);
+  const droneFpvIdRef = useRef(null);
+  const exitDroneFpvRef = useRef(() => {});
   const [leftTab, setLeftTab] = useState("overview");
   const [dateTime, setDateTime] = useState("");
   const [is3D, setIs3D] = useState(false);
+  const [fpvDroneId, setFpvDroneId] = useState(null);
   const [env, setEnv] = useState(null);
   const [envLoading, setEnvLoading] = useState(true);
   const [envError, setEnvError] = useState(null);
@@ -148,6 +158,29 @@ function App() {
       cancelled = true;
       clearInterval(id);
     };
+  }, []);
+
+  const exitDroneFpv = useCallback(() => {
+    droneFpvIdRef.current = null;
+    setFpvDroneId(null);
+    const m = mapRef.current;
+    if (m?.dragPan?.enable) {
+      m.dragPan.enable();
+      m.scrollZoom.enable();
+    }
+  }, []);
+
+  useEffect(() => {
+    exitDroneFpvRef.current = exitDroneFpv;
+  }, [exitDroneFpv]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "Escape" || !droneFpvIdRef.current) return;
+      exitDroneFpvRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   useEffect(() => {
@@ -482,7 +515,7 @@ function App() {
                 nfzContextRef.current
               );
               dropSel.popup.setLngLat([st.lng, st.lat]);
-              dropSel.popup.setHTML(formatFleetDotPopupHtml(st));
+              dropSel.popup.setHTML(formatFleetDotPopupHtml(st, {}));
             }
           }
           const droneSel = droneSelectionRef.current;
@@ -495,7 +528,39 @@ function App() {
             );
             if (st) {
               droneSel.popup.setLngLat([st.lng, st.lat]);
-              droneSel.popup.setHTML(formatFleetDotPopupHtml(st));
+              droneSel.popup.setHTML(
+                formatFleetDotPopupHtml(st, {
+                  showDroneFpvNote: is3DRef.current,
+                })
+              );
+            }
+          }
+        }
+
+        if (
+          is3DRef.current &&
+          droneFpvIdRef.current &&
+          typeof map.calculateCameraOptionsFromTo === "function"
+        ) {
+          const pair = getDroneCameraLookPair(
+            time,
+            droneFpvIdRef.current,
+            droneRoutesRef.current,
+            nfzContextRef.current
+          );
+          if (pair) {
+            try {
+              const opts = map.calculateCameraOptionsFromTo(
+                new maplibregl.LngLat(pair.camLng, pair.camLat),
+                pair.camAltM,
+                new maplibregl.LngLat(pair.lookLng, pair.lookLat),
+                pair.lookAtAltM
+              );
+              const pitch = Math.min(60, Math.max(26, opts.pitch ?? 50));
+              const zoom = Math.min(18.4, Math.max(14.2, opts.zoom ?? 16));
+              map.jumpTo({ ...opts, pitch, zoom, essential: true });
+            } catch {
+              /* degenerate from/to */
             }
           }
         }
@@ -518,17 +583,37 @@ function App() {
           nfzContextRef.current
         );
         if (!st) return;
+        if (is3DRef.current) {
+          droneFpvIdRef.current = id;
+          setFpvDroneId(id);
+          try {
+            map.dragPan.disable();
+            map.scrollZoom.disable();
+          } catch {
+            /* ignore */
+          }
+        } else {
+          droneFpvIdRef.current = null;
+          setFpvDroneId(null);
+        }
         const popup = new maplibregl.Popup({
           closeOnClick: false,
           maxWidth: "300px",
           className: "hkt-map-popup-anchor",
         })
           .setLngLat(feat.geometry.coordinates.slice())
-          .setHTML(formatFleetDotPopupHtml(st))
+          .setHTML(
+            formatFleetDotPopupHtml(st, {
+              showDroneFpvNote: is3DRef.current,
+            })
+          )
           .addTo(map);
         popup.on("close", () => {
           if (droneSelectionRef.current?.popup === popup) {
             droneSelectionRef.current = null;
+          }
+          if (droneFpvIdRef.current === id) {
+            exitDroneFpvRef.current();
           }
         });
         droneSelectionRef.current = { popup, droneId: id };
@@ -551,6 +636,14 @@ function App() {
         droneSelectionRef.current?.popup?.remove();
         droneSelectionRef.current = null;
         dropSelectionRef.current?.popup?.remove();
+        droneFpvIdRef.current = null;
+        setFpvDroneId(null);
+        try {
+          map.dragPan.enable();
+          map.scrollZoom.enable();
+        } catch {
+          /* ignore */
+        }
         const popup = new maplibregl.Popup({
           closeOnClick: false,
           maxWidth: "300px",
@@ -563,7 +656,8 @@ function App() {
                 performance.now(),
                 route,
                 nfzContextRef.current
-              )
+              ),
+              {}
             )
           )
           .addTo(map);
@@ -590,6 +684,7 @@ function App() {
 
     return () => {
       cancelled = true;
+      exitDroneFpvRef.current();
       dropSelectionRef.current?.popup?.remove();
       dropSelectionRef.current = null;
       droneSelectionRef.current?.popup?.remove();
@@ -624,6 +719,7 @@ function App() {
           essential: true,
         });
       } else {
+        exitDroneFpvRef.current();
         disableMap3D(map);
         map.easeTo({
           pitch: 0,
@@ -638,6 +734,20 @@ function App() {
 
   return (
     <div className="hkt-dashboard">
+      {fpvDroneId ? (
+        <div className="hkt-fpv-hud panel" role="status" aria-live="polite">
+          <span className="hkt-fpv-hud__title">Drone FPV</span>
+          <span className="hkt-fpv-hud__id">{fpvDroneId}</span>
+          <button
+            type="button"
+            className="hkt-fpv-hud__exit"
+            onClick={() => exitDroneFpv()}
+          >
+            Exit FPV
+          </button>
+          <span className="hkt-fpv-hud__hint">Esc</span>
+        </div>
+      ) : null}
       <div ref={mapContainerRef} className="hkt-map" aria-hidden />
 
       <header className="panel hkt-top-panel">
@@ -747,7 +857,7 @@ function App() {
             <h3>Vertiport &amp; Parking Status</h3>
             <div className="card">
               <p>
-                Available Spots: <span className="hkt-stat-bold">14 / 20</span>
+                Available Spots: <span className="hkt-stat-bold">7 / 10</span>
               </p>
               <hr className="hkt-divider" />
               <p>
