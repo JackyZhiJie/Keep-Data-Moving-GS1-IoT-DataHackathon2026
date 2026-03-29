@@ -3,7 +3,7 @@
 **Team:** MTR - Keep Data Moving  
 **Hackathon Track:** Challenge 4: Empowering Low-Altitude Economic Growth through UAV Traffic Management for Enterprise Applications  
 
-![Keep Data Moving Demo](./public/P038_Keep%20Data%20Moving%20Demo.png)
+![Keep Data Moving Demo](./public/P038_Keep%20Data%20Moving%20Demo.jpg)
 
 ## Overview
 Unmanned Aerial Vehicle (UAV) management in Hong Kong is highly challenging due to the lack of a centralised Unmanned Aircraft System Traffic management (UTM), difficulties in drone monitoring and silent (uncooperative) drone detection, and uncertain commercial returns. 
