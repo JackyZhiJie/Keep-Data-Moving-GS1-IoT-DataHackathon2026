@@ -44,7 +44,8 @@ The entire UTM is Open-Source and available on GitHub.
 
 * **Frontend:** ReactJS, HTML5, CSS3, JavaScript.
 * **Tools:** Visual Studio Code, GitHub.
-* **Data Sources:** * Environmental Data: Hong Kong Observatory
+* **Data Sources:**
+  * Environmental Data: Hong Kong Observatory
   * 2D & 3D Maps: OpenStreetMap
   * No Fly Zones: CAD Electronic Portal for Small Unmanned Aircraft (eSUA)
 
