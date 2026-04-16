@@ -8,7 +8,7 @@
  * 🚁 **Best Low-Altitude Economy Innovation Award** (presented by HKT)
  * 🛡️ **Innovator of Secure by Design Award** (presented by Check Point)
 
-**Link:** https://jackyzhijie.github.io/Keep-Data-Moving-GS1-IoT-DataHackathon2026/
+**Demo Website** https://jackyzhijie.github.io/Keep-Data-Moving-GS1-IoT-DataHackathon2026/
 
 ![Keep Data Moving Demo](./public/P038_Keep%20Data%20Moving%20Demo.jpg)
 
