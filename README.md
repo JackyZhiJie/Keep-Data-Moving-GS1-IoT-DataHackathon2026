@@ -1,7 +1,12 @@
-# UAV Guard
+# Award Winning IoT Data Hackathon Project - UAV Guard
 
-**Team:** MTR - Keep Data Moving  
+**Team:** Keep Data Moving - MTR Corporation  
 **Hackathon Track:** Challenge 4: Empowering Low-Altitude Economic Growth through UAV Traffic Management for Enterprise Applications
+
+**Awards:**
+* 🏆 **Champion of the Professional Stream**
+ * 🚁 **Best Low-Altitude Economy Innovation Award** (presented by HKT)
+ * 🛡️ **Innovator of Secure by Design Award** (presented by Check Point)
 
 **Link:** https://jackyzhijie.github.io/Keep-Data-Moving-GS1-IoT-DataHackathon2026/
 
@@ -89,7 +94,7 @@ npm run deploy
 This project is for educational and demonstration purposes.
 Made by Team Keep Data Moving - GS1 - IoT - Data - Hackathon - 2026
 
-**Status**: Initial Submission --> Hack Day --> Pitch Day (GS1 IoT Data Hackathon 2026)
+**Status**: Initial Submission --> Hack Day --> Pitch Day (GS1 IoT Data Hackathon 2026) --> Awarded
 
 ---
 
